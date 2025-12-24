@@ -164,7 +164,7 @@ export function ListeningTableCompletion({
 
                                     onAnswerChange(cell.question_number!, updatedAnswer);
                                   }}
-                                  className="ielts-input h-7 text-sm font-normal px-2 text-center min-w-[174px] max-w-full rounded-[3px] bg-[hsl(var(--ielts-input-bg,0_0%_100%))] text-foreground transition-colors border border-[hsl(var(--ielts-input-border))] focus:border-[hsl(var(--ielts-input-focus))] focus:border-2 focus:outline-none placeholder:text-foreground placeholder:font-bold"
+                                  className="ielts-input h-7 text-sm font-normal px-2 text-center min-w-[174px] max-w-full rounded-[3px] bg-[hsl(var(--ielts-input-bg,0_0%_100%))] text-foreground transition-colors border border-[hsl(var(--ielts-input-border))] focus:border-[hsl(var(--ielts-input-focus))] focus:border-2 focus:outline-none placeholder:text-center placeholder:font-bold placeholder:text-foreground/70"
                                   style={{
                                     fontFamily: 'var(--font-ielts)',
                                   }}
@@ -180,7 +180,7 @@ export function ListeningTableCompletion({
                               value={currentAnswers[0] || ''}
                               placeholder={String(cell.question_number)}
                               onChange={(e) => onAnswerChange(cell.question_number!, e.target.value)}
-                              className="ielts-input h-7 text-sm font-normal px-2 text-center min-w-[174px] max-w-full rounded-[3px] bg-[hsl(var(--ielts-input-bg,0_0%_100%))] text-foreground transition-colors border border-[hsl(var(--ielts-input-border))] focus:border-[hsl(var(--ielts-input-focus))] focus:border-2 focus:outline-none placeholder:text-foreground placeholder:font-bold"
+                              className="ielts-input h-7 text-sm font-normal px-2 text-center min-w-[174px] max-w-full rounded-[3px] bg-[hsl(var(--ielts-input-bg,0_0%_100%))] text-foreground transition-colors border border-[hsl(var(--ielts-input-border))] focus:border-[hsl(var(--ielts-input-focus))] focus:border-2 focus:outline-none placeholder:text-center placeholder:font-bold placeholder:text-foreground/70"
                               style={{
                                 fontFamily: 'var(--font-ielts)',
                               }}

@@ -156,7 +156,7 @@ export function NoteStyleFillInBlank({
                       placeholder={String(item.questionNumber)}
                       className={cn(
                         "ielts-input h-7 text-sm font-normal px-2 min-w-[174px] max-w-full rounded-[3px] text-center",
-                        "placeholder:text-foreground placeholder:font-bold",
+                        "placeholder:text-center placeholder:font-bold placeholder:text-foreground/70",
                         "bg-background border border-[hsl(var(--ielts-input-border))] text-foreground",
                         "focus:outline-none focus:border-[hsl(var(--ielts-input-focus))] focus:ring-0",
                         "transition-colors"
