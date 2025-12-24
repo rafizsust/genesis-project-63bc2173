@@ -4,7 +4,7 @@ import { Navbar } from '@/components/Navbar';
 import { Footer } from '@/components/Footer';
 import { BookSectionNew, QuestionTypeFilter } from '@/components/test-list';
 import { Card, CardContent } from '@/components/ui/card';
-import { BookOpen } from 'lucide-react';
+import { BookOpen, Circle, Loader2, CheckCircle2 } from 'lucide-react';
 import { useUserTestScores } from '@/hooks/useUserTestScores';
 
 interface Passage {
@@ -139,7 +139,7 @@ export default function ReadingTestList() {
       <Navbar />
 
       <main className="flex-1 container mx-auto px-4 py-6">
-        <div className="max-w-5xl mx-auto space-y-6">
+        <div className="max-w-7xl mx-auto space-y-6">
           {/* Compact Header */}
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-4 border-b border-border">
             <div>
@@ -149,6 +149,21 @@ export default function ReadingTestList() {
               <p className="text-sm text-muted-foreground mt-1">
                 Academic IELTS • {tests.length} tests available
               </p>
+            </div>
+            {/* Status Legend */}
+            <div className="flex items-center gap-4 text-xs text-muted-foreground">
+              <span className="flex items-center gap-1.5">
+                <Circle className="w-3.5 h-3.5" />
+                Not started
+              </span>
+              <span className="flex items-center gap-1.5">
+                <Loader2 className="w-3.5 h-3.5 text-primary" />
+                In Progress
+              </span>
+              <span className="flex items-center gap-1.5">
+                <CheckCircle2 className="w-3.5 h-3.5 text-success" />
+                Finish
+              </span>
             </div>
           </div>
 
