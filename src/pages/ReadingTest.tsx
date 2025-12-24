@@ -121,6 +121,9 @@ export default function ReadingTest() {
   const [showEntryOverlay, setShowEntryOverlay] = useState(true);
   const [testStarted, setTestStarted] = useState(false);
   const hasAutoSubmitted = useRef(false);
+  
+  // Mobile view state - 'passage' or 'questions'
+  const [mobileView, setMobileView] = useState<'passage' | 'questions'>('passage');
 
   // Map URL question types to database question types
   const questionTypeMap: Record<string, string> = {
@@ -767,11 +770,11 @@ export default function ReadingTest() {
         {/* Fixed Container for Header and Content */}
         <div className="flex-1 flex flex-col overflow-hidden">
           {/* Top Header - IELTS Official Style */}
-          <header className="border-b border-border bg-white px-4 py-3 flex items-center justify-between">
+          <header className="border-b border-border bg-white px-2 md:px-4 py-2 md:py-3 flex items-center justify-between">
             {/* Left - IELTS Logo and Test Taker ID */}
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2 md:gap-4">
               <div className="ielts-logo">
-                <span className="text-xl font-black tracking-tight text-[#c8102e]">IELTS</span>
+                <span className="text-lg md:text-xl font-black tracking-tight text-[#c8102e]">IELTS</span>
               </div>
               <span className="text-sm text-foreground hidden md:inline">Test taker ID</span>
             </div>
@@ -832,24 +835,200 @@ export default function ReadingTest() {
             <p>Read the text and answer questions {getPassageQuestionRange()}.</p>
           </div>
 
-          {/* Main Content with Resizable Panels */}
-          <div className="h-[calc(100vh-180px)] min-h-0">
-          <ResizablePanelGroup direction="horizontal" className="h-full">
-            {/* Left Panel - Passage (Independent Scroll) */}
-            <ResizablePanel defaultSize={50} minSize={30} maxSize={70}>
-              <div className="h-full flex flex-col">
+          {/* Mobile View Switcher - hidden on desktop */}
+          <div className="md:hidden flex border-b border-border bg-muted/30">
+            <button
+              className={cn(
+                "flex-1 py-2 text-sm font-medium text-center transition-colors",
+                mobileView === 'passage' 
+                  ? "bg-background text-foreground border-b-2 border-primary" 
+                  : "text-muted-foreground"
+              )}
+              onClick={() => setMobileView('passage')}
+            >
+              Reading Passage
+            </button>
+            <button
+              className={cn(
+                "flex-1 py-2 text-sm font-medium text-center transition-colors",
+                mobileView === 'questions' 
+                  ? "bg-background text-foreground border-b-2 border-primary" 
+                  : "text-muted-foreground"
+              )}
+              onClick={() => setMobileView('questions')}
+            >
+              Questions
+            </button>
+          </div>
+
+          {/* Main Content */}
+          <div className="flex-1 min-h-0 overflow-hidden">
+            {/* Desktop: Resizable Panels - hidden on mobile */}
+            <div className="hidden md:block h-full">
+              <ResizablePanelGroup direction="horizontal" className="h-full">
+                {/* Left Panel - Passage (Independent Scroll) */}
+                <ResizablePanel defaultSize={50} minSize={30} maxSize={70}>
+                  <div className="h-full flex flex-col">
+                    <div 
+                      className={cn(
+                        "flex-1 overflow-y-auto overflow-x-hidden p-6 ielts-card reading-passage",
+                        "scrollbar-thin scrollbar-thumb-primary/20 scrollbar-track-transparent hover:scrollbar-thumb-primary/40",
+                        "font-[var(--font-ielts)]"
+                      )}
+                    >
+                      {currentPassage && (
+                        <ReadingPassage 
+                          testId={testId!}
+                          passage={currentPassage} 
+                          fontSize={fontSize}
+                          hasMatchingHeadings={hasMatchingHeadings}
+                          headingOptions={headingOptions}
+                          headingAnswers={headingAnswers}
+                          headingQuestionNumbers={headingQuestionNumbers}
+                          onHeadingDrop={handleHeadingDrop}
+                          onHeadingRemove={handleHeadingRemove}
+                          renderRichText={renderRichText}
+                          selectedHeading={selectedHeading}
+                          onSelectPlace={handleSelectPlace}
+                          showLabels={currentPassage.show_labels !== false}
+                          onQuestionFocus={setCurrentQuestion}
+                        />
+                      )}
+                    </div>
+                  </div>
+                </ResizablePanel>
+                
+                {/* Resizable Handle */}
+                <ResizableHandle
+                  className="relative w-px bg-border cursor-col-resize select-none before:content-[''] before:absolute before:inset-y-0 before:left-1/2 before:w-6 before:-translate-x-1/2"
+                >
+                  <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-10 flex h-10 w-10 items-center justify-center border-2 border-border bg-background">
+                    <svg
+                      viewBox="0 0 24 12"
+                      aria-hidden="true"
+                      className="h-4 w-6 text-foreground/80"
+                      fill="none"
+                      xmlns="http://www.w3.org/2000/svg"
+                    >
+                      <path d="M6 2 L2 6 L6 10" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+                      <path d="M2 6 H22" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+                      <path d="M18 2 L22 6 L18 10" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </div>
+                </ResizableHandle>
+                
+                {/* Right Panel - Questions (Independent Scroll) */}
+                <ResizablePanel defaultSize={50} minSize={30} maxSize={70}>
+                  <div className="h-full flex flex-col relative">
+                    <div
+                      className={cn(
+                        "flex-1 overflow-y-auto overflow-x-hidden p-6 pb-20 ielts-card question-text",
+                        "scrollbar-thin scrollbar-thumb-primary/20 scrollbar-track-transparent hover:scrollbar-thumb-primary/40",
+                        "font-[var(--font-ielts)]"
+                      )}
+                    >
+                      {currentPassageQuestions.length === 0 ? (
+                        <div className="mx-auto max-w-xl rounded-lg border border-border bg-card p-6 text-center animate-fade-in">
+                          <h3 className="text-base font-semibold text-foreground">This part has no questions yet</h3>
+                          <p className="mt-2 text-sm text-muted-foreground">
+                            Part {currentPassageIndex + 1} doesn't have any questions in the database for this test.
+                          </p>
+                          <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+                            <Button variant="outline" onClick={clearFilter}>Clear filters</Button>
+                            <Button
+                              onClick={() => {
+                                const targetIndex = firstNonEmptyPassageIndex;
+                                const targetPassageId = passages[targetIndex]?.id;
+                                const firstQ = questions.find((q) => q.passage_id === targetPassageId)?.question_number;
+                                setCurrentPassageIndex(targetIndex);
+                                setSearchParams({ part: String(targetIndex + 1) });
+                                if (firstQ) setCurrentQuestion(firstQ);
+                              }}
+                            >
+                              Go to available part
+                            </Button>
+                          </div>
+                        </div>
+                      ) : (
+                        <ReadingQuestions 
+                          testId={testId!}
+                          questions={currentPassageQuestions}
+                          answers={answers}
+                          onAnswerChange={handleAnswerChange}
+                          currentQuestion={currentQuestion}
+                          setCurrentQuestion={setCurrentQuestion}
+                          fontSize={fontSize}
+                          headingOptions={headingOptions}
+                          headingAnswers={headingAnswers}
+                          paragraphLabels={headingParagraphLabels}
+                          onHeadingAnswerChange={(label, headingId) => {
+                            if (headingId) handleHeadingDrop(label, headingId);
+                            else handleHeadingRemove(label);
+                          }}
+                          getMaxAnswers={getMaxAnswers}
+                          getMatchingSentenceEndingsGroupOptions={getMatchingSentenceEndingsGroupOptions}
+                          getTableSelectionOptions={getTableSelectionOptions}
+                          getQuestionGroupOptions={getQuestionGroupOptions}
+                          renderRichText={renderRichText}
+                          selectedHeading={selectedHeading}
+                          onSelectedHeadingChange={setSelectedHeading}
+                        />
+                      )}
+                    </div>
+                    
+                    {/* Floating Navigation Arrows */}
+                    <div className="absolute bottom-2 right-4 flex items-center gap-2 z-10">
+                      <button 
+                        className={cn(
+                          "ielts-nav-arrow",
+                          displayQuestions.findIndex(q => q.question_number === currentQuestion) === 0 && "opacity-40 cursor-not-allowed"
+                        )}
+                        onClick={() => {
+                          const idx = displayQuestions.findIndex(q => q.question_number === currentQuestion);
+                          if (idx > 0) {
+                            const prevQ = displayQuestions[idx - 1];
+                            setCurrentQuestion(prevQ.question_number);
+                            const passageIdx = passages.findIndex(p => p.id === prevQ.passage_id);
+                            if (passageIdx !== -1) setCurrentPassageIndex(passageIdx);
+                          }
+                        }}
+                        disabled={displayQuestions.findIndex(q => q.question_number === currentQuestion) === 0}
+                      >
+                        <ArrowLeft size={24} strokeWidth={2.5} />
+                      </button>
+                      <button 
+                        className="ielts-nav-arrow ielts-nav-arrow-primary"
+                        onClick={() => {
+                          const idx = displayQuestions.findIndex(q => q.question_number === currentQuestion);
+                          if (idx < displayQuestions.length - 1) {
+                            const nextQ = displayQuestions[idx + 1];
+                            setCurrentQuestion(nextQ.question_number);
+                            const passageIdx = passages.findIndex(p => p.id === nextQ.passage_id);
+                            if (passageIdx !== -1) setCurrentPassageIndex(passageIdx);
+                          }
+                        }}
+                      >
+                        <ArrowRight size={24} strokeWidth={2.5} />
+                      </button>
+                    </div>
+                  </div>
+                </ResizablePanel>
+              </ResizablePanelGroup>
+            </div>
+
+            {/* Mobile: Single Panel View - hidden on desktop */}
+            <div className="md:hidden h-full flex flex-col relative">
+              {/* Mobile Passage View */}
+              {mobileView === 'passage' && (
                 <div 
                   className={cn(
-                    "flex-1 overflow-y-auto overflow-x-hidden p-6 ielts-card reading-passage",
-                    // Custom scrollbar styling
-                    "scrollbar-thin scrollbar-thumb-primary/20 scrollbar-track-transparent hover:scrollbar-thumb-primary/40",
-                    // IELTS official test font
+                    "flex-1 overflow-y-auto overflow-x-hidden p-4 ielts-card reading-passage",
                     "font-[var(--font-ielts)]"
                   )}
                 >
                   {currentPassage && (
                     <ReadingPassage 
-                      testId={testId!} // Pass testId
+                      testId={testId!}
                       passage={currentPassage} 
                       fontSize={fontSize}
                       hasMatchingHeadings={hasMatchingHeadings}
@@ -858,93 +1037,37 @@ export default function ReadingTest() {
                       headingQuestionNumbers={headingQuestionNumbers}
                       onHeadingDrop={handleHeadingDrop}
                       onHeadingRemove={handleHeadingRemove}
-                      renderRichText={renderRichText} // Pass renderRichText
+                      renderRichText={renderRichText}
                       selectedHeading={selectedHeading}
                       onSelectPlace={handleSelectPlace}
                       showLabels={currentPassage.show_labels !== false}
-                      onQuestionFocus={setCurrentQuestion}
+                      onQuestionFocus={(qNum) => {
+                        setCurrentQuestion(qNum);
+                        setMobileView('questions');
+                      }}
                     />
                   )}
                 </div>
-              </div>
-            </ResizablePanel>
-            
-            {/* Resizable Handle - Official IELTS style: square box + single bidirectional arrow */}
-            <ResizableHandle
-              className="relative w-px bg-border cursor-col-resize select-none before:content-[''] before:absolute before:inset-y-0 before:left-1/2 before:w-6 before:-translate-x-1/2"
-            >
-              <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-10 flex h-10 w-10 items-center justify-center border-2 border-border bg-background">
-                <svg
-                  viewBox="0 0 24 12"
-                  aria-hidden="true"
-                  className="h-4 w-6 text-foreground/80"
-                  fill="none"
-                  xmlns="http://www.w3.org/2000/svg"
-                >
-                  <path
-                    d="M6 2 L2 6 L6 10"
-                    stroke="currentColor"
-                    strokeWidth="1.6"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                  <path
-                    d="M2 6 H22"
-                    stroke="currentColor"
-                    strokeWidth="1.6"
-                    strokeLinecap="round"
-                  />
-                  <path
-                    d="M18 2 L22 6 L18 10"
-                    stroke="currentColor"
-                    strokeWidth="1.6"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-              </div>
-            </ResizableHandle>
-            
-            {/* Right Panel - Questions (Independent Scroll) */}
-            <ResizablePanel defaultSize={50} minSize={30} maxSize={70}>
-              <div className="h-full flex flex-col relative">
+              )}
+
+              {/* Mobile Questions View */}
+              {mobileView === 'questions' && (
                 <div
                   className={cn(
-                    "flex-1 overflow-y-auto overflow-x-hidden p-6 pb-20 ielts-card question-text",
-                    // Custom scrollbar styling
-                    "scrollbar-thin scrollbar-thumb-primary/20 scrollbar-track-transparent hover:scrollbar-thumb-primary/40",
-                    // IELTS official test font
+                    "flex-1 overflow-y-auto overflow-x-hidden p-4 pb-20 ielts-card question-text",
                     "font-[var(--font-ielts)]"
                   )}
                 >
                   {currentPassageQuestions.length === 0 ? (
-                    <div className="mx-auto max-w-xl rounded-lg border border-border bg-card p-6 text-center animate-fade-in">
+                    <div className="mx-auto max-w-xl rounded-lg border border-border bg-card p-4 text-center animate-fade-in">
                       <h3 className="text-base font-semibold text-foreground">This part has no questions yet</h3>
                       <p className="mt-2 text-sm text-muted-foreground">
-                        Part {currentPassageIndex + 1} doesn't have any questions in the database for this test.
+                        Part {currentPassageIndex + 1} doesn't have any questions.
                       </p>
-                      <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
-                        <Button variant="outline" onClick={clearFilter}>
-                          Clear filters
-                        </Button>
-                        <Button
-                          onClick={() => {
-                            const targetIndex = firstNonEmptyPassageIndex;
-                            const targetPassageId = passages[targetIndex]?.id;
-                            const firstQ = questions.find((q) => q.passage_id === targetPassageId)?.question_number;
-
-                            setCurrentPassageIndex(targetIndex);
-                            setSearchParams({ part: String(targetIndex + 1) });
-                            if (firstQ) setCurrentQuestion(firstQ);
-                          }}
-                        >
-                          Go to available part
-                        </Button>
-                      </div>
                     </div>
                   ) : (
                     <ReadingQuestions 
-                      testId={testId!} // Pass testId for notes/highlights
+                      testId={testId!}
                       questions={currentPassageQuestions}
                       answers={answers}
                       onAnswerChange={handleAnswerChange}
@@ -955,61 +1078,59 @@ export default function ReadingTest() {
                       headingAnswers={headingAnswers}
                       paragraphLabels={headingParagraphLabels}
                       onHeadingAnswerChange={(label, headingId) => {
-                        if (headingId) {
-                          handleHeadingDrop(label, headingId);
-                        } else {
-                          handleHeadingRemove(label);
-                        }
+                        if (headingId) handleHeadingDrop(label, headingId);
+                        else handleHeadingRemove(label);
                       }}
                       getMaxAnswers={getMaxAnswers}
                       getMatchingSentenceEndingsGroupOptions={getMatchingSentenceEndingsGroupOptions}
                       getTableSelectionOptions={getTableSelectionOptions}
                       getQuestionGroupOptions={getQuestionGroupOptions}
-                      renderRichText={renderRichText} // Pass renderRichText
+                      renderRichText={renderRichText}
                       selectedHeading={selectedHeading}
                       onSelectedHeadingChange={setSelectedHeading}
                     />
                   )}
                 </div>
-                
-                {/* Floating Navigation Arrows - positioned immediately above bottom nav */}
-                <div className="absolute bottom-2 right-4 flex items-center gap-2 z-10">
-                  <button 
-                    className={cn(
-                      "ielts-nav-arrow",
-                      displayQuestions.findIndex(q => q.question_number === currentQuestion) === 0 && "opacity-40 cursor-not-allowed"
-                    )}
-                    onClick={() => {
-                      const idx = displayQuestions.findIndex(q => q.question_number === currentQuestion);
-                      if (idx > 0) {
-                        const prevQ = displayQuestions[idx - 1];
-                        setCurrentQuestion(prevQ.question_number);
-                        const passageIdx = passages.findIndex(p => p.id === prevQ.passage_id);
-                        if (passageIdx !== -1) setCurrentPassageIndex(passageIdx);
-                      }
-                    }}
-                    disabled={displayQuestions.findIndex(q => q.question_number === currentQuestion) === 0}
-                  >
-                    <ArrowLeft size={24} strokeWidth={2.5} />
-                  </button>
-                  <button 
-                    className="ielts-nav-arrow ielts-nav-arrow-primary"
-                    onClick={() => {
-                      const idx = displayQuestions.findIndex(q => q.question_number === currentQuestion);
-                      if (idx < displayQuestions.length - 1) {
-                        const nextQ = displayQuestions[idx + 1];
-                        setCurrentQuestion(nextQ.question_number);
-                        const passageIdx = passages.findIndex(p => p.id === nextQ.passage_id);
-                        if (passageIdx !== -1) setCurrentPassageIndex(passageIdx);
-                      }
-                    }}
-                  >
-                    <ArrowRight size={24} strokeWidth={2.5} />
-                  </button>
-                </div>
+              )}
+              
+              {/* Mobile Floating Navigation Arrows */}
+              <div className="absolute bottom-2 right-2 flex items-center gap-1.5 z-10">
+                <button 
+                  className={cn(
+                    "ielts-nav-arrow",
+                    displayQuestions.findIndex(q => q.question_number === currentQuestion) === 0 && "opacity-40 cursor-not-allowed"
+                  )}
+                  onClick={() => {
+                    const idx = displayQuestions.findIndex(q => q.question_number === currentQuestion);
+                    if (idx > 0) {
+                      const prevQ = displayQuestions[idx - 1];
+                      setCurrentQuestion(prevQ.question_number);
+                      const passageIdx = passages.findIndex(p => p.id === prevQ.passage_id);
+                      if (passageIdx !== -1) setCurrentPassageIndex(passageIdx);
+                      setMobileView('questions');
+                    }
+                  }}
+                  disabled={displayQuestions.findIndex(q => q.question_number === currentQuestion) === 0}
+                >
+                  <ArrowLeft size={20} strokeWidth={2.5} />
+                </button>
+                <button 
+                  className="ielts-nav-arrow ielts-nav-arrow-primary"
+                  onClick={() => {
+                    const idx = displayQuestions.findIndex(q => q.question_number === currentQuestion);
+                    if (idx < displayQuestions.length - 1) {
+                      const nextQ = displayQuestions[idx + 1];
+                      setCurrentQuestion(nextQ.question_number);
+                      const passageIdx = passages.findIndex(p => p.id === nextQ.passage_id);
+                      if (passageIdx !== -1) setCurrentPassageIndex(passageIdx);
+                      setMobileView('questions');
+                    }
+                  }}
+                >
+                  <ArrowRight size={20} strokeWidth={2.5} />
+                </button>
               </div>
-            </ResizablePanel>
-          </ResizablePanelGroup>
+            </div>
           </div>
         </div>
 

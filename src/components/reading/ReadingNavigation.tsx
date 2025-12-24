@@ -342,7 +342,7 @@ export function ReadingNavigation({
   return (
     <footer className="bg-card shrink-0">
       {/* Progress indicator bars - at top edge */}
-      <div className="flex w-full" style={{ paddingLeft: NAV_HORIZONTAL_PADDING, paddingRight: NAV_HORIZONTAL_PADDING }}>
+      <div className="flex w-full overflow-x-auto scrollbar-none" style={{ paddingLeft: NAV_HORIZONTAL_PADDING, paddingRight: NAV_HORIZONTAL_PADDING }}>
         <div className="flex min-w-0 flex-1">
           {parts.map((p) => {
             const isActive = currentPassageIndex === p.index;
@@ -396,7 +396,7 @@ export function ReadingNavigation({
       </div>
       
       {/* Content row - numbers centered */}
-      <div className="flex w-full items-center" style={{ paddingLeft: NAV_HORIZONTAL_PADDING, paddingRight: NAV_HORIZONTAL_PADDING }}>
+      <div className="flex w-full items-center overflow-x-auto scrollbar-none" style={{ paddingLeft: NAV_HORIZONTAL_PADDING, paddingRight: NAV_HORIZONTAL_PADDING }}>
         {/* Parts container */}
         <div className="flex min-w-0 flex-1 items-center">
           {parts.map((p) => {
@@ -501,23 +501,19 @@ export function ReadingNavigation({
         </div>
 
         {/* Submit button */}
-        <div className="flex shrink-0 items-center ml-8">
+        <div className="flex shrink-0 items-center ml-4 md:ml-8">
           <button
             className={cn(
-              "transition-colors flex items-center justify-center",
+              "transition-colors flex items-center justify-center ielts-submit-btn",
               allQuestionsAnswered
                 ? "bg-foreground text-background hover:bg-foreground/90"
                 : "bg-muted text-muted-foreground hover:bg-muted/80",
             )}
-            style={{ 
-              height: 48,
-              width: 64,
-              borderRadius: 0,
-            }}
             onClick={onSubmit}
             title="Submit test"
           >
-            <Check size={24} strokeWidth={2.5} />
+            <Check size={20} className="md:hidden" strokeWidth={2.5} />
+            <Check size={24} className="hidden md:block" strokeWidth={2.5} />
           </button>
         </div>
       </div>
