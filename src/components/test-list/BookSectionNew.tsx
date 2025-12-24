@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Clock, Headphones, BookOpen, Play, CheckCircle2, Circle, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import { getQuestionTypeInfo } from './QuestionTypeBadge';
+import { QuestionTypeBadge } from './QuestionTypeBadge';
 
 interface QuestionGroup {
   id: string;
@@ -255,9 +255,7 @@ function TestCard({ test, testType, score }: TestCardProps) {
           const isComplete = hasPartScore && partScore.score === partScore.totalQuestions;
           const isInProgress = hasPartScore && partScore.score > 0 && partScore.score < partScore.totalQuestions;
           
-          const typeAbbrs = part.types
-            .map(t => getQuestionTypeInfo(t).short)
-            .filter((v, i, a) => a.indexOf(v) === i);
+          const uniqueTypes = part.types.filter((v, i, a) => a.indexOf(v) === i);
 
           return (
             <div 
@@ -275,16 +273,24 @@ function TestCard({ test, testType, score }: TestCardProps) {
               )}
 
               {/* Part Info */}
-              <div className="flex-1 min-w-0">
-                <div className="text-xs font-medium text-foreground truncate">
+              <div className="flex-1 min-w-0 flex items-center gap-1.5 flex-wrap">
+                <span className="text-xs font-medium text-foreground">
                   Part {part.partNumber}
-                  {typeAbbrs.length > 0 && (
-                    <span className="text-muted-foreground font-normal ml-1">
-                      · {typeAbbrs.slice(0, 2).join(', ')}
-                      {typeAbbrs.length > 2 && '...'}
-                    </span>
-                  )}
-                </div>
+                </span>
+                {uniqueTypes.slice(0, 2).map((type) => (
+                  <QuestionTypeBadge
+                    key={type}
+                    type={type}
+                    clickable
+                    testId={test.id}
+                    testType={testType}
+                    partNumber={part.partNumber}
+                    className="text-[9px] px-1.5 py-0"
+                  />
+                ))}
+                {uniqueTypes.length > 2 && (
+                  <span className="text-[9px] text-muted-foreground">+{uniqueTypes.length - 2}</span>
+                )}
               </div>
 
               {/* Part Score */}
