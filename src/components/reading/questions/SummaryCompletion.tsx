@@ -122,7 +122,7 @@ export function SummaryCompletion({ question, answer, onAnswerChange, isActive, 
         <Select value={answer || ''} onValueChange={onAnswerChange}>
           <SelectTrigger 
             className={cn(
-              "w-full h-7 rounded-[3px]",
+              "min-w-[174px] w-auto h-7 rounded-[3px]",
               "bg-[hsl(var(--ielts-input-bg,0_0%_100%))] border border-[hsl(var(--ielts-input-border))] text-foreground",
               "focus:border-[hsl(var(--ielts-input-focus))] focus:ring-0",
               isActive && "border-[hsl(var(--ielts-input-focus))] border-2"
@@ -148,14 +148,14 @@ export function SummaryCompletion({ question, answer, onAnswerChange, isActive, 
       onClick={(e) => { e.stopPropagation(); onSetActive?.(); }}
       style={{ fontFamily: 'var(--font-ielts)' }}
     >
-      <span className="ielts-input-with-number inline-flex items-center w-full">
+      <span className="ielts-input-with-number inline-flex items-center">
         <span className="ielts-input-number-inside">{question.question_number}</span>
         <input
           type="text"
           value={answer || ''}
           onChange={(e) => onAnswerChange(e.target.value)}
           className={cn(
-            "ielts-input w-full h-7 text-sm pl-7 pr-2",
+            "ielts-input min-w-[174px] h-7 text-sm pl-7 pr-2",
             isActive && "border-[hsl(var(--ielts-input-focus))] border-2"
           )}
         />
