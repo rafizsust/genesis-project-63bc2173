@@ -1,6 +1,6 @@
-import { useState, useMemo } from 'react';
+import { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ChevronDown, ChevronRight, Clock, CheckCircle2, Circle, Play, BookOpen } from 'lucide-react';
+import { Clock, Headphones, BookOpen, Play, CheckCircle2, Circle, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { getQuestionTypeInfo } from './QuestionTypeBadge';
@@ -50,7 +50,6 @@ export function BookSectionNew({
   selectedQuestionTypes,
   userScores = {},
 }: BookSectionNewProps) {
-  // Filter tests based on selected question types
   const filteredTests = selectedQuestionTypes.length === 0 
     ? tests 
     : tests.filter((test) => 
@@ -62,60 +61,75 @@ export function BookSectionNew({
   if (filteredTests.length === 0) return null;
 
   const sortedTests = [...filteredTests].sort((a, b) => a.test_number - b.test_number);
-  const completedCount = sortedTests.filter(t => userScores[t.id]?.overall).length;
+  
+  // Extract book number from name (e.g., "Cambridge IELTS 19" -> "19")
+  const bookNumber = bookName.match(/\d+/)?.[0] || '';
 
   return (
-    <div className="mb-6">
-      {/* Book Header - IELTS beige style */}
-      <div 
-        className="flex items-center justify-between px-4 py-3 rounded-t-lg border border-b-0 border-border"
-        style={{ 
-          backgroundColor: 'hsl(var(--ielts-section-bg))',
-          fontFamily: 'var(--font-ielts)'
-        }}
-      >
-        <div className="flex items-center gap-3">
-          <span className="text-base font-bold" style={{ color: 'hsl(var(--ielts-section-text))' }}>
-            {bookName}
+    <div className="mb-8">
+      {/* Book Section with sidebar + grid layout */}
+      <div className="flex gap-0 rounded-xl overflow-hidden shadow-sm border border-border/50">
+        {/* Left Sidebar - Book Label */}
+        <div 
+          className="hidden md:flex flex-col items-center justify-center px-6 py-8 min-w-[140px]"
+          style={{ 
+            backgroundColor: 'hsl(var(--foreground))',
+            color: 'hsl(var(--background))'
+          }}
+        >
+          <span className="text-xs font-bold uppercase tracking-wider opacity-80">
+            {testType === 'reading' ? 'Reading' : 'Listening'}
           </span>
-          <span className="text-sm text-muted-foreground">
-            {sortedTests.length} test{sortedTests.length !== 1 ? 's' : ''}
+          <span className="text-4xl font-bold mt-1">{bookNumber}</span>
+          <span className="text-[10px] uppercase tracking-widest opacity-60 mt-1">
+            Academic
           </span>
         </div>
-        {completedCount > 0 && (
-          <span className="text-xs font-medium text-muted-foreground">
-            {completedCount}/{sortedTests.length} completed
-          </span>
-        )}
-      </div>
 
-      {/* Tests Table */}
-      <div className="border border-border rounded-b-lg bg-card overflow-hidden">
-        {sortedTests.map((test) => (
-          <TestRow
-            key={test.id}
-            test={test}
-            testType={testType}
-            score={userScores[test.id]}
-          />
-        ))}
+        {/* Mobile Header */}
+        <div 
+          className="md:hidden flex items-center gap-3 px-4 py-3 w-full"
+          style={{ 
+            backgroundColor: 'hsl(var(--foreground))',
+            color: 'hsl(var(--background))'
+          }}
+        >
+          <div className="text-2xl font-bold">{bookNumber}</div>
+          <div>
+            <div className="text-sm font-semibold">{bookName}</div>
+            <div className="text-xs opacity-70">{sortedTests.length} tests</div>
+          </div>
+        </div>
+
+        {/* Tests Grid */}
+        <div className="flex-1 bg-card p-4 md:p-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+            {sortedTests.map((test) => (
+              <TestCard
+                key={test.id}
+                test={test}
+                testType={testType}
+                score={userScores[test.id]}
+              />
+            ))}
+          </div>
+        </div>
       </div>
     </div>
   );
 }
 
-// Test Row Component
-interface TestRowProps {
+// Test Card Component
+interface TestCardProps {
   test: TestData;
   testType: 'reading' | 'listening';
   score?: { overall: TestScore | null; parts: Record<number, { score: number; totalQuestions: number }> };
 }
 
-function TestRow({ test, testType, score }: TestRowProps) {
+function TestCard({ test, testType, score }: TestCardProps) {
   const navigate = useNavigate();
-  const [isExpanded, setIsExpanded] = useState(false);
-
   const hasScore = score?.overall !== null && score?.overall !== undefined;
+  const overallScore = score?.overall;
 
   // Get parts data
   const partsData = useMemo(() => {
@@ -133,7 +147,6 @@ function TestRow({ test, testType, score }: TestRowProps) {
         };
       });
     } else {
-      // Listening: 4 parts based on question ranges
       const parts: { partNumber: number; questionCount: number; types: string[]; title?: string; passageId?: string }[] = [];
       for (let i = 1; i <= 4; i++) {
         const partGroups = test.question_groups?.filter(g => {
@@ -150,199 +163,160 @@ function TestRow({ test, testType, score }: TestRowProps) {
     }
   }, [test, testType]);
 
-  const allTypes = partsData.flatMap(p => p.types);
-  const uniqueTypes = [...new Set(allTypes)];
-
-  const handleStart = (e: React.MouseEvent) => {
-    e.stopPropagation();
+  const handleStart = () => {
     navigate(`/${testType}/test/${test.id}`);
   };
 
+  // Calculate score percentage for the ring
+  const scorePercent = overallScore 
+    ? Math.round((overallScore.score / overallScore.totalQuestions) * 100) 
+    : 0;
+
   return (
-    <div className="border-b border-border last:border-b-0">
-      {/* Main Row */}
-      <div 
-        className="flex items-center gap-3 px-4 py-3 hover:bg-muted/30 cursor-pointer transition-colors"
-        onClick={() => setIsExpanded(!isExpanded)}
-        style={{ fontFamily: 'var(--font-ielts)' }}
-      >
-        {/* Expand Icon */}
-        <button className="text-muted-foreground hover:text-foreground transition-colors shrink-0">
-          {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-        </button>
-
-        {/* Test Number Badge */}
-        <div 
-          className="w-8 h-8 rounded border flex items-center justify-center font-bold text-sm shrink-0"
-          style={{ 
-            borderColor: 'hsl(var(--ielts-badge-border))',
-            backgroundColor: 'hsl(var(--ielts-badge-bg))',
-            color: 'hsl(var(--ielts-badge-text))'
-          }}
-        >
-          {test.test_number}
-        </div>
-
-        {/* Title & Meta */}
-        <div className="flex-1 min-w-0">
-          <div className="font-medium text-sm truncate text-foreground">
-            {test.title}
-          </div>
-          <div className="flex items-center gap-3 text-xs text-muted-foreground mt-0.5">
-            <span className="flex items-center gap-1">
-              <Clock className="w-3 h-3" />
-              {test.time_limit} min
+    <div className="flex flex-col bg-background rounded-xl border border-border/50 overflow-hidden hover:shadow-md transition-shadow">
+      {/* Score Circle Section */}
+      <div className="flex flex-col items-center pt-5 pb-3 relative">
+        {/* Progress Ring */}
+        <div className="relative w-16 h-16">
+          <svg className="w-16 h-16 transform -rotate-90">
+            {/* Background circle */}
+            <circle
+              cx="32"
+              cy="32"
+              r="28"
+              stroke="hsl(var(--muted))"
+              strokeWidth="4"
+              fill="none"
+            />
+            {/* Progress circle */}
+            {hasScore && (
+              <circle
+                cx="32"
+                cy="32"
+                r="28"
+                stroke={scorePercent >= 70 ? 'hsl(142, 76%, 36%)' : scorePercent >= 50 ? 'hsl(var(--primary))' : 'hsl(var(--muted-foreground))'}
+                strokeWidth="4"
+                fill="none"
+                strokeDasharray={`${(scorePercent / 100) * 176} 176`}
+                strokeLinecap="round"
+              />
+            )}
+          </svg>
+          {/* Score text */}
+          <div className="absolute inset-0 flex flex-col items-center justify-center">
+            <span className="text-lg font-bold text-foreground">
+              {hasScore ? overallScore?.score : '—'}
             </span>
-            <span>{test.total_questions} Qs</span>
-            <span>{partsData.length} parts</span>
+            <span className="text-[10px] text-muted-foreground">
+              /{test.total_questions}
+            </span>
           </div>
         </div>
-
-        {/* Question Types (desktop only) */}
-        <div className="hidden lg:flex items-center gap-1 flex-wrap max-w-[200px] shrink-0">
-          {uniqueTypes.slice(0, 4).map((type, idx) => {
-            const info = getQuestionTypeInfo(type);
-            return (
-              <span 
-                key={idx}
-                className="px-1.5 py-0.5 text-[10px] font-medium rounded bg-muted text-muted-foreground"
-                title={info.full}
-              >
-                {info.short}
-              </span>
-            );
-          })}
-          {uniqueTypes.length > 4 && (
-            <span className="text-[10px] text-muted-foreground">+{uniqueTypes.length - 4}</span>
-          )}
-        </div>
-
-        {/* Score/Status */}
-        <div className="flex items-center gap-2 shrink-0">
-          {hasScore && score?.overall && (
-            <div className="flex items-center gap-2">
-              <span className={cn(
-                "px-2 py-0.5 rounded text-xs font-semibold",
-                score.overall.bandScore && score.overall.bandScore >= 7 
-                  ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
-                  : score.overall.bandScore && score.overall.bandScore >= 5.5
-                    ? "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400"
-                    : "bg-muted text-muted-foreground"
-              )}>
-                {score.overall.score}/{score.overall.totalQuestions}
-              </span>
-              {score.overall.bandScore && (
-                <span className="text-xs font-semibold text-primary hidden sm:inline">
-                  Band {score.overall.bandScore}
-                </span>
-              )}
-              <CheckCircle2 className="w-4 h-4 text-green-600 shrink-0" />
-            </div>
-          )}
-          {!hasScore && (
-            <Circle className="w-4 h-4 text-muted-foreground/50 shrink-0" />
-          )}
-        </div>
-
-        {/* Start Button */}
-        <Button 
-          size="sm" 
-          onClick={handleStart}
-          className="h-8 px-4 text-xs font-semibold shrink-0"
-          style={{ fontFamily: 'var(--font-ielts)' }}
-        >
-          <Play className="w-3 h-3 mr-1" />
-          {hasScore ? 'Retry' : 'Start'}
-        </Button>
+        
+        {/* Band score badge */}
+        {hasScore && overallScore?.bandScore && (
+          <div className={cn(
+            "mt-2 px-2 py-0.5 rounded-full text-[10px] font-semibold",
+            overallScore.bandScore >= 7 
+              ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
+              : overallScore.bandScore >= 5.5
+                ? "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
+                : "bg-muted text-muted-foreground"
+          )}>
+            Band {overallScore.bandScore}
+          </div>
+        )}
       </div>
 
-      {/* Expanded Parts */}
-      {isExpanded && (
-        <div className="bg-muted/20 border-t border-border">
-          {partsData.map((part) => {
-            const partScore = score?.parts?.[part.partNumber];
-            const partFinished = partScore && partScore.score === partScore.totalQuestions;
-            const typeAbbrs = part.types
-              .map(t => getQuestionTypeInfo(t).short)
-              .filter((v, i, a) => a.indexOf(v) === i);
+      {/* Card Header - Test Info */}
+      <div 
+        className="px-3 py-2.5 flex items-center gap-2"
+        style={{ backgroundColor: 'hsl(var(--primary))' }}
+      >
+        {testType === 'listening' ? (
+          <Headphones className="w-4 h-4 text-primary-foreground/80" />
+        ) : (
+          <BookOpen className="w-4 h-4 text-primary-foreground/80" />
+        )}
+        <span className="text-sm font-semibold text-primary-foreground truncate flex-1">
+          Test {test.test_number}
+        </span>
+        <span className="text-xs text-primary-foreground/70 flex items-center gap-1">
+          <Clock className="w-3 h-3" />
+          {test.time_limit}m
+        </span>
+      </div>
 
-            return (
-              <div 
-                key={part.partNumber}
-                className="flex items-center gap-3 px-4 py-2.5 pl-14 border-b border-border/50 last:border-b-0 hover:bg-muted/30 transition-colors"
-                style={{ fontFamily: 'var(--font-ielts)' }}
-              >
-                {/* Part Label */}
-                <div className="w-14 text-xs font-semibold text-muted-foreground uppercase tracking-wide shrink-0">
+      {/* Parts List */}
+      <div className="flex-1 divide-y divide-border/50">
+        {partsData.map((part) => {
+          const partScore = score?.parts?.[part.partNumber];
+          const hasPartScore = partScore && partScore.totalQuestions > 0;
+          const isComplete = hasPartScore && partScore.score === partScore.totalQuestions;
+          const isInProgress = hasPartScore && partScore.score > 0 && partScore.score < partScore.totalQuestions;
+          
+          const typeAbbrs = part.types
+            .map(t => getQuestionTypeInfo(t).short)
+            .filter((v, i, a) => a.indexOf(v) === i);
+
+          return (
+            <div 
+              key={part.partNumber}
+              className="px-3 py-2 flex items-center gap-2 hover:bg-muted/30 transition-colors cursor-pointer group"
+              onClick={() => navigate(`/${testType}/test/${test.id}?part=${part.partNumber}`)}
+            >
+              {/* Status Icon */}
+              {isComplete ? (
+                <CheckCircle2 className="w-3.5 h-3.5 text-green-600 shrink-0" />
+              ) : isInProgress ? (
+                <Loader2 className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+              ) : (
+                <Circle className="w-3.5 h-3.5 text-muted-foreground/40 shrink-0" />
+              )}
+
+              {/* Part Info */}
+              <div className="flex-1 min-w-0">
+                <div className="text-xs font-medium text-foreground truncate">
                   Part {part.partNumber}
-                </div>
-
-                {/* Part Info */}
-                <div className="flex-1 min-w-0">
-                  {part.title && (
-                    <div className="text-sm text-foreground/80 truncate">
-                      {part.title}
-                    </div>
-                  )}
-                  <div className="text-xs text-muted-foreground flex items-center gap-2">
-                    <span>{part.questionCount} Qs</span>
-                    {partScore && (
-                      <span className={cn(
-                        "font-medium",
-                        partFinished ? "text-green-600" : "text-primary"
-                      )}>
-                        • {partScore.score}/{partScore.totalQuestions}
-                      </span>
-                    )}
-                  </div>
-                </div>
-
-                {/* Question Types */}
-                <div className="hidden sm:flex items-center gap-1 flex-wrap shrink-0">
-                  {typeAbbrs.map((abbr, idx) => (
-                    <span 
-                      key={idx}
-                      className="px-1.5 py-0.5 text-[10px] font-medium rounded bg-muted text-muted-foreground"
-                    >
-                      {abbr}
+                  {typeAbbrs.length > 0 && (
+                    <span className="text-muted-foreground font-normal ml-1">
+                      · {typeAbbrs.slice(0, 2).join(', ')}
+                      {typeAbbrs.length > 2 && '...'}
                     </span>
-                  ))}
-                </div>
-
-                {/* Part Actions */}
-                <div className="flex items-center gap-2 shrink-0">
-                  {testType === 'reading' && part.passageId && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-7 px-2 text-xs hidden sm:flex"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        navigate(`/passage-study/${part.passageId}`);
-                      }}
-                    >
-                      <BookOpen className="w-3 h-3 mr-1" />
-                      Study
-                    </Button>
                   )}
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-7 px-3 text-xs"
-                    style={{ fontFamily: 'var(--font-ielts)' }}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      navigate(`/${testType}/test/${test.id}?part=${part.partNumber}`);
-                    }}
-                  >
-                    Start
-                  </Button>
                 </div>
               </div>
-            );
-          })}
-        </div>
-      )}
+
+              {/* Part Score */}
+              {hasPartScore && (
+                <span className={cn(
+                  "text-[10px] font-semibold px-1.5 py-0.5 rounded",
+                  isComplete 
+                    ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" 
+                    : "bg-muted text-muted-foreground"
+                )}>
+                  {partScore.score}/{partScore.totalQuestions}
+                </span>
+              )}
+
+              {/* Play icon on hover */}
+              <Play className="w-3 h-3 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Footer - Start Button */}
+      <div className="p-3 pt-2 border-t border-border/50">
+        <Button 
+          onClick={handleStart}
+          size="sm"
+          className="w-full h-8 text-xs font-semibold"
+        >
+          <Play className="w-3 h-3 mr-1.5" />
+          {hasScore ? 'Retry Full Test' : 'Start Full Test'}
+        </Button>
+      </div>
     </div>
   );
 }
