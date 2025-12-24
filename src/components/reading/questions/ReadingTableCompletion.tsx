@@ -191,7 +191,7 @@ export function ReadingTableCompletion({
                                       onFocus={() => setCurrentQuestion(cell.question_number!)}
                                       placeholder={String(cell.question_number)}
                                       className={cn(
-                                        "ielts-input h-7 text-sm font-normal px-2 min-w-[174px] max-w-full rounded-[3px] text-center placeholder:text-foreground placeholder:font-bold",
+                                        "ielts-input h-7 text-sm font-normal px-2 min-w-[174px] max-w-full rounded-[3px] text-center placeholder:text-center placeholder:font-bold placeholder:text-foreground/70",
                                         "bg-background border border-[hsl(var(--ielts-input-border))] text-foreground",
                                         "focus:outline-none focus:border-[hsl(var(--ielts-input-focus))] focus:ring-0",
                                         "transition-colors align-middle mx-1"
@@ -218,8 +218,8 @@ export function ReadingTableCompletion({
                                   onChange={(e) => onAnswerChange(cell.question_number!, e.target.value)}
                                   onFocus={() => setCurrentQuestion(cell.question_number!)}
                                   placeholder={String(cell.question_number)}
-                                  className={cn(
-                                    "ielts-input h-7 text-sm font-normal px-2 min-w-[174px] max-w-full rounded-[3px] text-center placeholder:text-foreground placeholder:font-bold",
+                                    className={cn(
+                                      "ielts-input h-7 text-sm font-normal px-2 min-w-[174px] max-w-full rounded-[3px] text-center placeholder:text-center placeholder:font-bold placeholder:text-foreground/70",
                                     "bg-background border border-[hsl(var(--ielts-input-border))] text-foreground",
                                     "focus:outline-none focus:border-[hsl(var(--ielts-input-focus))] focus:ring-0",
                                     "transition-colors"

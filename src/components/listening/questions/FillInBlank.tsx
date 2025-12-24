@@ -118,7 +118,7 @@ export function FillInBlank({
                   }}
                   placeholder={String(question.question_number)}
                   className={cn(
-                    "ielts-input h-7 text-sm font-normal px-2 min-w-[174px] max-w-full rounded-[3px] text-center placeholder:text-foreground placeholder:font-bold",
+                    "ielts-input h-7 text-sm font-normal px-2 min-w-[174px] max-w-full rounded-[3px] text-center placeholder:text-center placeholder:font-bold placeholder:text-foreground/70",
                     "bg-background border border-[hsl(var(--ielts-input-border))] text-foreground",
                     "focus:outline-none focus:border-[hsl(var(--ielts-input-focus))] focus:ring-0",
                     "transition-colors align-middle mx-1"
@@ -141,7 +141,7 @@ export function FillInBlank({
         onChange={(e) => onAnswerChange(e.target.value)}
         placeholder={String(question.question_number)}
         className={cn(
-          "ielts-input h-7 text-sm font-normal px-2 min-w-[174px] max-w-full rounded-[3px] text-center placeholder:text-foreground placeholder:font-bold",
+          "ielts-input h-7 text-sm font-normal px-2 min-w-[174px] max-w-full rounded-[3px] text-center placeholder:text-center placeholder:font-bold placeholder:text-foreground/70",
           "bg-background border border-[hsl(var(--ielts-input-border))] text-foreground",
           "focus:outline-none focus:border-[hsl(var(--ielts-input-focus))] focus:ring-0",
           "transition-colors"
