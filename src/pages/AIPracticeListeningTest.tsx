@@ -13,6 +13,7 @@ import {
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
 import { cn } from '@/lib/utils';
+import { checkAnswer } from '@/lib/ieltsAnswerValidation';
 import { HighlightNoteProvider } from '@/hooks/useHighlightNotes';
 import { NoteSidebar } from '@/components/common/NoteSidebar';
 import { SubmitConfirmDialog } from '@/components/common/SubmitConfirmDialog';
@@ -308,9 +309,14 @@ export default function AIPracticeListeningTest() {
       const userAnswer = answers[q.question_number]?.trim() || '';
       const correctAnswer = q.correct_answer;
 
-      const normalizedUser = userAnswer.toLowerCase().trim();
-      const acceptableAnswers = correctAnswer.split('/').map(a => a.trim().toLowerCase());
-      const isCorrect = acceptableAnswers.some(a => a === normalizedUser);
+      // Get question type for proper validation
+      const questionType = q.question_type || 
+        test.questionGroups?.find(g => 
+          g.questions.some(gq => gq.question_number === q.question_number)
+        )?.question_type;
+
+      // Use IELTS-aware answer checking with question type
+      const isCorrect = checkAnswer(userAnswer, correctAnswer, questionType);
 
       const originalQ = test.questionGroups?.flatMap(g => g.questions).find(
         oq => oq.question_number === q.question_number

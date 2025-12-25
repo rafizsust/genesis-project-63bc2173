@@ -1005,18 +1005,47 @@ serve(async (req) => {
           summary_text: parsed.summary_text 
         };
       } else if (questionType === 'FLOWCHART_COMPLETION') {
+        // Generate flowchart image for reading tests
+        let flowchartImageUrl: string | undefined;
+        if (parsed.flowchart_steps) {
+          console.log('Generating flowchart image for reading FLOWCHART_COMPLETION...');
+          const flowchartImageData = await generateFlowchartImage(
+            parsed.flowchart_title || 'Process Flowchart',
+            parsed.flowchart_steps
+          );
+          if (flowchartImageData) {
+            const uploadedUrl = await uploadGeneratedImage(supabaseClient, flowchartImageData, testId, 'ai-practice-flowcharts');
+            if (uploadedUrl) {
+              flowchartImageUrl = uploadedUrl;
+            }
+          }
+        }
         groupOptions = { 
           flowchart_title: parsed.flowchart_title,
-          flowchart_steps: parsed.flowchart_steps 
+          flowchart_steps: parsed.flowchart_steps,
+          imageUrl: flowchartImageUrl,
         };
       } else if (questionType === 'TABLE_COMPLETION') {
         groupOptions = { table_data: parsed.table_data };
       } else if (questionType === 'NOTE_COMPLETION') {
         groupOptions = { note_sections: parsed.note_sections };
       } else if (questionType === 'MAP_LABELING') {
+        // Generate map image for reading tests
+        let mapImageUrl: string | undefined;
+        if (parsed.map_description && parsed.map_labels) {
+          console.log('Generating map image for reading MAP_LABELING...');
+          const mapImageData = await generateMapImage(parsed.map_description, parsed.map_labels);
+          if (mapImageData) {
+            const uploadedUrl = await uploadGeneratedImage(supabaseClient, mapImageData, testId, 'ai-practice-maps');
+            if (uploadedUrl) {
+              mapImageUrl = uploadedUrl;
+            }
+          }
+        }
         groupOptions = { 
           map_description: parsed.map_description,
-          map_labels: parsed.map_labels 
+          map_labels: parsed.map_labels,
+          imageUrl: mapImageUrl,
         };
       } else if (questionType.includes('MULTIPLE_CHOICE') && parsed.questions?.[0]?.options) {
         groupOptions = { options: parsed.questions[0].options };
