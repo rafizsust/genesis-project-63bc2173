@@ -1,17 +1,21 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { Navbar } from '@/components/Navbar';
 import { Footer } from '@/components/Footer';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   loadGeneratedTestAsync,
   loadPracticeResultsAsync,
   GeneratedTest,
   PracticeResult,
+  QuestionResult,
 } from '@/types/aiPractice';
 import { useAuth } from '@/hooks/useAuth';
+import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { 
   CheckCircle2, 
@@ -23,9 +27,27 @@ import {
   Home,
   ChevronDown,
   ChevronUp,
-  Sparkles
+  Sparkles,
+  MessageCircle,
+  Send,
+  Loader2,
+  Bot,
+  User
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+
+interface ChatMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: Date;
+}
+
+interface QuestionChatState {
+  messages: ChatMessage[];
+  isLoading: boolean;
+  isOpen: boolean;
+}
 
 export default function AIPracticeResults() {
   const { testId } = useParams<{ testId: string }>();
@@ -35,6 +57,11 @@ export default function AIPracticeResults() {
   const [test, setTest] = useState<GeneratedTest | null>(null);
   const [result, setResult] = useState<PracticeResult | null>(null);
   const [expandedQuestions, setExpandedQuestions] = useState<Set<number>>(new Set());
+  
+  // Chat state per question
+  const [questionChats, setQuestionChats] = useState<Record<number, QuestionChatState>>({});
+  const [chatInputs, setChatInputs] = useState<Record<number, string>>({});
+  const chatEndRefs = useRef<Record<number, HTMLDivElement | null>>({});
 
   useEffect(() => {
     if (!testId) {
@@ -96,6 +123,16 @@ export default function AIPracticeResults() {
     };
   }, [testId, navigate, user, authLoading]);
 
+  // Scroll to bottom of chat when new messages arrive
+  useEffect(() => {
+    Object.entries(questionChats).forEach(([qNum, chat]) => {
+      if (chat.messages.length > 0) {
+        const ref = chatEndRefs.current[Number(qNum)];
+        ref?.scrollIntoView({ behavior: 'smooth' });
+      }
+    });
+  }, [questionChats]);
+
   const toggleQuestion = (qNum: number) => {
     setExpandedQuestions(prev => {
       const next = new Set(prev);
@@ -106,6 +143,103 @@ export default function AIPracticeResults() {
       }
       return next;
     });
+  };
+
+  const toggleChat = (qNum: number) => {
+    setQuestionChats(prev => ({
+      ...prev,
+      [qNum]: {
+        ...prev[qNum],
+        messages: prev[qNum]?.messages || [],
+        isLoading: prev[qNum]?.isLoading || false,
+        isOpen: !prev[qNum]?.isOpen,
+      }
+    }));
+  };
+
+  const sendMessage = async (questionNumber: number, qResult: QuestionResult) => {
+    const message = chatInputs[questionNumber]?.trim();
+    if (!message || !test) return;
+
+    const question = (test.questionGroups || [])
+      .flatMap(g => g.questions)
+      .find(q => q.question_number === questionNumber);
+
+    // Add user message
+    const userMessage: ChatMessage = {
+      id: crypto.randomUUID(),
+      role: 'user',
+      content: message,
+      timestamp: new Date(),
+    };
+
+    setQuestionChats(prev => ({
+      ...prev,
+      [questionNumber]: {
+        ...prev[questionNumber],
+        messages: [...(prev[questionNumber]?.messages || []), userMessage],
+        isLoading: true,
+        isOpen: true,
+      }
+    }));
+    setChatInputs(prev => ({ ...prev, [questionNumber]: '' }));
+
+    try {
+      const { data, error } = await supabase.functions.invoke('explain-answer-followup', {
+        body: {
+          question: message,
+          context: {
+            module: test.module,
+            questionType: test.questionType,
+            difficulty: test.difficulty,
+            topic: test.topic,
+            passage: test.passage,
+            questionNumber,
+            questionText: question?.question_text || qResult.correctAnswer,
+            options: question?.options,
+            userAnswer: qResult.userAnswer,
+            correctAnswer: qResult.correctAnswer,
+            isCorrect: qResult.isCorrect,
+            explanation: qResult.explanation,
+          },
+        },
+      });
+
+      if (error) throw error;
+
+      const assistantMessage: ChatMessage = {
+        id: crypto.randomUUID(),
+        role: 'assistant',
+        content: data.response || 'Sorry, I could not generate a response.',
+        timestamp: new Date(),
+      };
+
+      setQuestionChats(prev => ({
+        ...prev,
+        [questionNumber]: {
+          ...prev[questionNumber],
+          messages: [...(prev[questionNumber]?.messages || []), assistantMessage],
+          isLoading: false,
+        }
+      }));
+    } catch (err: any) {
+      console.error('Chat error:', err);
+      toast.error(err.message || 'Failed to get AI response');
+      setQuestionChats(prev => ({
+        ...prev,
+        [questionNumber]: {
+          ...prev[questionNumber],
+          isLoading: false,
+        }
+      }));
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent, questionNumber: number, qResult: QuestionResult) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage(questionNumber, qResult);
+    }
   };
 
   const formatTime = (seconds: number) => {
@@ -230,7 +364,13 @@ export default function AIPracticeResults() {
           {/* Detailed Results */}
           <Card className="mb-6">
             <CardHeader>
-              <CardTitle>Question by Question Review</CardTitle>
+              <CardTitle className="flex items-center gap-2">
+                Question by Question Review
+                <Badge variant="secondary" className="ml-2 font-normal">
+                  <MessageCircle className="w-3 h-3 mr-1" />
+                  Ask AI for help
+                </Badge>
+              </CardTitle>
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
@@ -240,6 +380,7 @@ export default function AIPracticeResults() {
                     .find(q => q.question_number === qResult.questionNumber);
                   
                   const isExpanded = expandedQuestions.has(qResult.questionNumber);
+                  const chatState = questionChats[qResult.questionNumber] || { messages: [], isLoading: false, isOpen: false };
 
                   return (
                     <div 
@@ -320,6 +461,127 @@ export default function AIPracticeResults() {
                           <div className="bg-muted/50 rounded-lg p-4">
                             <p className="text-sm font-medium text-muted-foreground mb-1">Explanation</p>
                             <p className="text-sm">{qResult.explanation}</p>
+                          </div>
+
+                          {/* AI Follow-up Chat Section */}
+                          <div className="border-t pt-4">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => toggleChat(qResult.questionNumber)}
+                              className="gap-2 mb-3"
+                            >
+                              <MessageCircle className="w-4 h-4" />
+                              {chatState.isOpen ? 'Hide' : 'Ask AI'} about this question
+                              {chatState.messages.length > 0 && (
+                                <Badge variant="secondary" className="ml-1">
+                                  {chatState.messages.length}
+                                </Badge>
+                              )}
+                            </Button>
+
+                            {chatState.isOpen && (
+                              <div className="bg-muted/30 rounded-lg border p-3 space-y-3">
+                                {/* Chat Messages */}
+                                {chatState.messages.length > 0 && (
+                                  <ScrollArea className="max-h-[300px] pr-2">
+                                    <div className="space-y-3">
+                                      {chatState.messages.map((msg) => (
+                                        <div
+                                          key={msg.id}
+                                          className={cn(
+                                            "flex gap-2",
+                                            msg.role === 'user' ? 'justify-end' : 'justify-start'
+                                          )}
+                                        >
+                                          {msg.role === 'assistant' && (
+                                            <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
+                                              <Bot className="w-4 h-4 text-primary" />
+                                            </div>
+                                          )}
+                                          <div
+                                            className={cn(
+                                              "rounded-lg px-3 py-2 max-w-[85%] text-sm",
+                                              msg.role === 'user'
+                                                ? 'bg-primary text-primary-foreground'
+                                                : 'bg-background border'
+                                            )}
+                                          >
+                                            <p className="whitespace-pre-wrap">{msg.content}</p>
+                                          </div>
+                                          {msg.role === 'user' && (
+                                            <div className="w-7 h-7 rounded-full bg-muted flex items-center justify-center shrink-0">
+                                              <User className="w-4 h-4" />
+                                            </div>
+                                          )}
+                                        </div>
+                                      ))}
+                                      {chatState.isLoading && (
+                                        <div className="flex gap-2 justify-start">
+                                          <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
+                                            <Bot className="w-4 h-4 text-primary" />
+                                          </div>
+                                          <div className="bg-background border rounded-lg px-3 py-2">
+                                            <Loader2 className="w-4 h-4 animate-spin" />
+                                          </div>
+                                        </div>
+                                      )}
+                                      <div ref={el => chatEndRefs.current[qResult.questionNumber] = el} />
+                                    </div>
+                                  </ScrollArea>
+                                )}
+
+                                {/* Suggested Questions */}
+                                {chatState.messages.length === 0 && (
+                                  <div className="space-y-2">
+                                    <p className="text-xs text-muted-foreground">Suggested questions:</p>
+                                    <div className="flex flex-wrap gap-2">
+                                      {[
+                                        'Why was my answer wrong?',
+                                        'Explain this in simpler terms',
+                                        'Give me a similar example',
+                                        'What strategy should I use?',
+                                      ].map((suggestion) => (
+                                        <Button
+                                          key={suggestion}
+                                          variant="secondary"
+                                          size="sm"
+                                          className="text-xs h-7"
+                                          onClick={() => {
+                                            setChatInputs(prev => ({ ...prev, [qResult.questionNumber]: suggestion }));
+                                          }}
+                                        >
+                                          {suggestion}
+                                        </Button>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {/* Chat Input */}
+                                <div className="flex gap-2">
+                                  <Input
+                                    placeholder="Ask a follow-up question..."
+                                    value={chatInputs[qResult.questionNumber] || ''}
+                                    onChange={(e) => setChatInputs(prev => ({ ...prev, [qResult.questionNumber]: e.target.value }))}
+                                    onKeyDown={(e) => handleKeyDown(e, qResult.questionNumber, qResult)}
+                                    disabled={chatState.isLoading}
+                                    className="flex-1"
+                                  />
+                                  <Button
+                                    size="icon"
+                                    onClick={() => sendMessage(qResult.questionNumber, qResult)}
+                                    disabled={chatState.isLoading || !chatInputs[qResult.questionNumber]?.trim()}
+                                  >
+                                    {chatState.isLoading ? (
+                                      <Loader2 className="w-4 h-4 animate-spin" />
+                                    ) : (
+                                      <Send className="w-4 h-4" />
+                                    )}
+                                  </Button>
+                                </div>
+                              </div>
+                            )}
                           </div>
                         </div>
                       )}
