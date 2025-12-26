@@ -635,6 +635,23 @@ export default function AIPractice() {
                         )}
                       </div>
                     )}
+
+                    {/* Estimated Generation Time */}
+                    {(() => {
+                      const durationSec = listeningTranscriptPreset === 'custom'
+                        ? (listeningUseWordCountMode ? Math.round(customTranscriptWordCount / 150 * 60) : customTranscriptDuration)
+                        : LISTENING_TRANSCRIPT_PRESETS[listeningTranscriptPreset].durationSeconds;
+                      const estimatedGenTime = durationSec <= 120 ? '15-30' : durationSec <= 300 ? '30-60' : '60-90';
+                      return (
+                        <div className="flex items-center gap-2 p-3 rounded-lg bg-primary/5 border border-primary/20">
+                          <Clock className="w-4 h-4 text-primary" />
+                          <span className="text-sm">
+                            <span className="text-muted-foreground">Estimated generation time:</span>{' '}
+                            <span className="font-medium text-primary">{estimatedGenTime} seconds</span>
+                          </span>
+                        </div>
+                      );
+                    })()}
                   </div>
 
                   {/* Question Count */}
