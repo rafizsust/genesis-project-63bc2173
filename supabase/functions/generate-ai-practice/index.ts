@@ -667,7 +667,8 @@ Return ONLY valid JSON in this exact format:
       }
       
       return basePrompt + `2. Create ${questionCount} fill-in-the-blank/sentence completion questions.
-   - Answers should be words or short phrases from the passage (1-3 words)${variationInstructions}
+   - IMPORTANT: Vary answer lengths - use a MIX of ONE, TWO, and THREE word answers (max 3 words)
+   - Some answers should be 1 word, some 2 words, some 3 words - do NOT make them all the same length${variationInstructions}
 
 Return ONLY valid JSON in this exact format:
 {
@@ -729,9 +730,11 @@ Return ONLY valid JSON in this exact format:
       return basePrompt + `2. Create a table completion task with ${questionCount} blanks to fill.
 
 CRITICAL RULES:
-1. Each correct_answer MUST be NO MORE THAN TWO WORDS. Never use three-word answers.
-   - If you need to express something that would naturally be 3+ words, rephrase it or pick the 2 most important words.
-   - Example: Instead of "greenhouse gas emissions" use "gas emissions" or "greenhouse gases".
+1. Answer length MUST VARY - use a MIX of ONE word and TWO word answers:
+   - Some answers should be exactly 1 word (e.g., "pollution", "technology")
+   - Some answers should be exactly 2 words (e.g., "water supply", "climate change")
+   - DO NOT make all answers the same length!
+   - Maximum allowed is 2 words, but prefer a natural mix.
 2. Tables MUST have EXACTLY 3 COLUMNS (no more, no less).
 3. Use inline blanks with __ (double underscores) within cell content, NOT separate cells for blanks.
    - Example: "Clean air and water, pollination of crops, and __" where __ is the blank
@@ -753,9 +756,9 @@ Return ONLY valid JSON in this exact format:
     [{"content": "Third item"}, {"content": "Additional info about __", "has_question": true, "question_number": 3}, {"content": "Significant"}]
   ],
   "questions": [
-    {"question_number": 1, "question_text": "Fill in blank 1", "correct_answer": "two words", "explanation": "Found in paragraph B"},
-    {"question_number": 2, "question_text": "Fill in blank 2", "correct_answer": "answer here", "explanation": "Found in paragraph C"},
-    {"question_number": 3, "question_text": "Fill in blank 3", "correct_answer": "final answer", "explanation": "Found in paragraph D"}
+    {"question_number": 1, "question_text": "Fill in blank 1", "correct_answer": "resources", "explanation": "Found in paragraph B"},
+    {"question_number": 2, "question_text": "Fill in blank 2", "correct_answer": "water scarcity", "explanation": "Found in paragraph C"},
+    {"question_number": 3, "question_text": "Fill in blank 3", "correct_answer": "deforestation", "explanation": "Found in paragraph D"}
   ]
 }`;
 
@@ -972,7 +975,10 @@ Requirements:
   switch (questionType) {
     case 'FILL_IN_BLANK':
       return basePrompt + `2. Create ${questionCount} fill-in-the-blank questions.
-   - Answers should be exact words/phrases spoken in the dialogue (1-2 words)
+   - IMPORTANT: Vary answer lengths - use a MIX of ONE word and TWO word answers
+   - Some answers should be exactly 1 word (e.g., "Tuesday", "1985")
+   - Some answers should be exactly 2 words (e.g., "next Monday", "room three")
+   - Maximum allowed is 2 words, but do NOT make all answers the same length
 
 Return ONLY valid JSON in this exact format:
 {
@@ -995,7 +1001,11 @@ CRITICAL RULES:
 1. Tables MUST have EXACTLY 3 COLUMNS (no more, no less).
 2. Use inline blanks with __ (double underscores) within cell content.
    - Example: "Morning session starts with __" where __ is the blank
-3. Each correct_answer MUST be NO MORE THAN TWO WORDS.
+3. DISTRIBUTE blanks across BOTH column 2 AND column 3. Do NOT put all blanks only in one column.
+4. Answer length MUST VARY - use a MIX of ONE word and TWO word answers:
+   - Some answers should be exactly 1 word (e.g., "registration")
+   - Some answers should be exactly 2 words (e.g., "coffee break")
+   - Maximum allowed is 2 words, but do NOT make all answers the same length
 
 Return ONLY valid JSON in this exact format:
 {
@@ -1004,11 +1014,11 @@ Return ONLY valid JSON in this exact format:
   "table_data": [
     [{"content": "Time", "is_header": true}, {"content": "Activity", "is_header": true}, {"content": "Location", "is_header": true}],
     [{"content": "9:00 AM"}, {"content": "Session starts with __", "has_question": true, "question_number": 1}, {"content": "Main Hall"}],
-    [{"content": "11:00 AM"}, {"content": "Break followed by __", "has_question": true, "question_number": 2}, {"content": "Room B"}]
+    [{"content": "11:00 AM"}, {"content": "Break time"}, {"content": "Held in __", "has_question": true, "question_number": 2}]
   ],
   "questions": [
     {"question_number": 1, "question_text": "Activity at 9 AM", "correct_answer": "registration", "explanation": "Speaker mentions registration at 9"},
-    {"question_number": 2, "question_text": "Activity at 11 AM", "correct_answer": "workshop", "explanation": "Workshop mentioned for 11 AM"}
+    {"question_number": 2, "question_text": "Location at 11 AM", "correct_answer": "conference room", "explanation": "Conference room mentioned for 11 AM"}
   ]
 }`;
 
