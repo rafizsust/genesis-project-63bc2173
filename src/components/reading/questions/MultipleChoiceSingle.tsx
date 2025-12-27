@@ -35,34 +35,30 @@ export function MultipleChoiceSingle({ testId, renderRichText, question, answer,
   const rawOptions = question.options || [];
   const optionFormat = question.option_format || 'A'; // Get format from question prop
 
-  // Helper to strip existing letter prefix like "A. ", "B. " from option text
-  const stripLetterPrefix = (text: string): { label: string; cleanText: string } => {
-    // Match patterns like "A. ", "B. ", "1. ", "i. " at the start
-    const match = text.match(/^([A-Za-z]|[ivxIVX]+|\d+)\.\s*/);
-    if (match) {
-      return { label: match[1].toUpperCase(), cleanText: text.substring(match[0].length) };
-    }
-    return { label: '', cleanText: text };
+  // Helper to strip existing letter prefix like "A. ", "B. ", "A ", "B ", "A.", "B." from option text
+  const stripLetterPrefix = (text: string): string => {
+    if (!text) return '';
+    // Match patterns at start: "A. ", "A.", "A ", "a. ", etc. or roman numerals or numbers
+    // Must handle: "A. text", "A.text", "A text", "a. text"
+    const cleaned = text.replace(/^([A-Za-z]|[ivxIVX]+|\d+)[\.\s]+\s*/i, '');
+    return cleaned || text;
   };
 
   // Normalize options to handle both string[] and {label, text}[] formats
   const normalizedOptions = rawOptions.map((opt, idx) => {
+    const label = getOptionLabel(idx, optionFormat);
+    
     if (typeof opt === 'string') {
-      const { cleanText } = stripLetterPrefix(opt);
-      // Always generate label from index to avoid duplicates
-      return { 
-        label: getOptionLabel(idx, optionFormat), 
-        text: cleanText || opt 
-      };
+      // Strip any existing prefix from string options
+      const cleanText = stripLetterPrefix(opt);
+      return { label, text: cleanText };
     }
+    
     // Handle object format {label: "A", text: "..."}
     const optObj = opt as { label?: string; text?: string };
-    // Strip prefix from text if present and always use index for label
-    const { cleanText } = stripLetterPrefix(optObj.text || String(opt));
-    return {
-      label: getOptionLabel(idx, optionFormat),
-      text: cleanText || optObj.text || String(opt),
-    };
+    const rawText = optObj.text || String(opt);
+    const cleanText = stripLetterPrefix(rawText);
+    return { label, text: cleanText };
   });
 
   return (

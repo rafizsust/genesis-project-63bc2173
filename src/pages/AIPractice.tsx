@@ -136,6 +136,7 @@ export default function AIPractice() {
   // Loading state
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationStep, setGenerationStep] = useState(0);
+  const [abortController, setAbortController] = useState<AbortController | null>(null);
 
   const currentQuestionType = activeModule === 'reading' ? readingQuestionType 
     : activeModule === 'listening' ? listeningQuestionType
@@ -345,6 +346,19 @@ export default function AIPractice() {
 
   const moduleEstimate = getModuleEstimate();
 
+  const handleAbortGeneration = () => {
+    if (abortController) {
+      abortController.abort();
+    }
+    setIsGenerating(false);
+    setGenerationStep(0);
+    setAbortController(null);
+    toast({
+      title: 'Generation Cancelled',
+      description: 'Test generation was cancelled. You can try again when ready.',
+    });
+  };
+
   if (isGenerating) {
     return (
       <AILoadingScreen
@@ -354,6 +368,7 @@ export default function AIPractice() {
         currentStepIndex={generationStep}
         estimatedTime={moduleEstimate.text}
         estimatedSeconds={moduleEstimate.seconds}
+        onAbort={handleAbortGeneration}
       />
     );
   }
@@ -807,11 +822,11 @@ export default function AIPractice() {
                   id="topic"
                   value={topicPreference}
                   onChange={(e) => setTopicPreference(e.target.value.slice(0, 100))}
-                  placeholder="e.g., Environmental science, Technology, Education..."
+                  placeholder="e.g., Environmental science, Technology... (max 100 chars)"
                   maxLength={100}
                 />
                 <p className="text-sm text-muted-foreground">
-                  Leave empty for a random IELTS-standard topic. Max 100 characters.
+                  Leave empty for a random topic.
                 </p>
               </div>
 
