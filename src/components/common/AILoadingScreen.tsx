@@ -43,8 +43,8 @@ export function AILoadingScreen({
     : null;
 
   return (
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-background/95 backdrop-blur-sm animate-fade-in">
-      <div className="text-center max-w-lg p-8 space-y-8">
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-background/95 backdrop-blur-sm animate-fade-in overflow-y-auto">
+      <div className="text-center max-w-lg p-8 space-y-8 my-auto">
         {/* AI Brain Logo with Animation */}
         <div className="relative w-32 h-32 mx-auto flex items-center justify-center">
           <div className="absolute inset-0 rounded-full border-2 border-primary/50 animate-pulse-ring" />

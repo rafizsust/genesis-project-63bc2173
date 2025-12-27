@@ -90,6 +90,7 @@ export function MultipleChoiceSingle({ testId, renderRichText, question, answer,
                 className="text-sm leading-relaxed flex-1"
                 style={{ fontFamily: 'var(--font-ielts)' }}
               >
+                <span className="font-medium">{option.label}.</span>{' '}
                 <QuestionTextWithTools
                   testId={testId}
                   contentId={`${question.id}-option-${idx}`}

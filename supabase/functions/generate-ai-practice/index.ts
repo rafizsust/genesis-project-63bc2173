@@ -728,6 +728,10 @@ Return ONLY valid JSON in this exact format:
     case 'TABLE_COMPLETION':
       return basePrompt + `2. Create a table completion task with ${questionCount} blanks to fill.
 
+CRITICAL RULE: Each correct_answer MUST be NO MORE THAN TWO WORDS. Never use three-word answers.
+- If you need to express something that would naturally be 3+ words, rephrase it or pick the 2 most important words.
+- Example: Instead of "greenhouse gas emissions" use "gas emissions" or "greenhouse gases".
+
 Return ONLY valid JSON in this exact format:
 {
   "passage": {
@@ -742,9 +746,9 @@ Return ONLY valid JSON in this exact format:
     [{"content": "Third item"}, {"content": "", "has_question": true, "question_number": 3}]
   ],
   "questions": [
-    {"question_number": 1, "question_text": "Fill in blank 1", "correct_answer": "answer one", "explanation": "Found in paragraph B"},
-    {"question_number": 2, "question_text": "Fill in blank 2", "correct_answer": "answer two", "explanation": "Found in paragraph C"},
-    {"question_number": 3, "question_text": "Fill in blank 3", "correct_answer": "answer three", "explanation": "Found in paragraph D"}
+    {"question_number": 1, "question_text": "Fill in blank 1", "correct_answer": "two words", "explanation": "Found in paragraph B"},
+    {"question_number": 2, "question_text": "Fill in blank 2", "correct_answer": "answer here", "explanation": "Found in paragraph C"},
+    {"question_number": 3, "question_text": "Fill in blank 3", "correct_answer": "final answer", "explanation": "Found in paragraph D"}
   ]
 }`;
 

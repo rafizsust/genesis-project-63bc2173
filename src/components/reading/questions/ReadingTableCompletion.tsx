@@ -77,7 +77,7 @@ export function ReadingTableCompletion({
       {/* Table - Official IELTS Style */}
       <div className="overflow-x-auto">
         <table 
-          className="border-collapse"
+          className="border-collapse w-full table-fixed"
           style={{ 
             borderTop: '1px solid #000',
             borderLeft: '1px solid #000',
@@ -138,7 +138,7 @@ export function ReadingTableCompletion({
                     <td 
                       key={colIndex}
                       className={cn(
-                        "bg-white px-3 py-2 text-black align-top",
+                        "bg-white px-3 py-2 text-black align-top break-words",
                         getAlignmentClass(cell.alignment)
                       )}
                       style={{
@@ -146,6 +146,9 @@ export function ReadingTableCompletion({
                         borderBottom: '1px solid #000',
                         fontSize: `${fontSize}px`,
                         minWidth: '120px',
+                        maxWidth: '300px',
+                        wordBreak: 'break-word',
+                        overflowWrap: 'break-word',
                       }}
                       onClick={() => {
                         if (cell.question_number) {
