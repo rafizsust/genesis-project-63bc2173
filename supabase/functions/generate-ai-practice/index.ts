@@ -1071,26 +1071,40 @@ ${characterInstructions}
 
 CRITICAL SPELLING & NUMBER RULES:
 - The dialogue MUST be ${scenarioMap[spellingMode.testScenario]}.
-- For at least one blank, Speaker A must SPELL OUT the answer letter-by-letter using dashes (e.g., "My name is Sharma. That's S-H-A-R-M-A").
+- For at least one blank, the speaker MUST SPELL OUT the answer letter-by-letter using dashes.
+- IMPORTANT SPELLING RULE: Only spell the part that appears IN THE BLANK, not the part already visible in the question text.
+  - Example: If question is "Name: Dr. ____ Reed", and full name is "Evelyn Reed", spell "Evelyn" (E-V-E-L-Y-N) NOT "Reed"
+  - The blank should contain what needs to be written, so spell ONLY that missing word/name
 - Use ${difficultyDesc} for names.
 - Include ${numberDesc} for number-based gaps.
 - Create realistic "distractor and correction" patterns (e.g., "Oh wait, it's 4, not 5").
-- IMPORTANT: Vary answer lengths - use ONE word, TWO words, or THREE words:
+- IMPORTANT: Vary answer lengths - use ONE word, TWO words, or THREE words AND/OR numbers:
   - Some answers should be exactly 1 word (e.g., "Tuesday", "Sharma")
   - Some answers should be exactly 2 words (e.g., "next Monday", "room three")
   - Some answers can be 3 words (e.g., "conference room B")
-  - Maximum allowed is 3 words, but do NOT make all answers the same length
+  - Numbers are acceptable: "222", "15", "March 5th"
+  - Maximum allowed is 3 words AND/OR a number
+
+CRITICAL FOR NUMBER ANSWERS:
+- When numbers are spoken as "triple two" or "double seven", the CORRECT ANSWER must be the NUMERIC form (e.g., "222" or "77")
+- Both "222" and "triple two" should be considered correct (put the numeric form as correct_answer)
 
 Return ONLY valid JSON in this exact format:
 {
-  "dialogue": "Speaker1: Hello, I'd like to book an appointment...\\nSpeaker2: Certainly, can I take your name please?\\nSpeaker1: Yes, it's Ankita Sharma. That's A-N-K-I-T-A, and Sharma is S-H-A-R-M-A.\\nSpeaker2: Thank you. And your phone number?\\nSpeaker1: It's double seven, five, nine, oh, three, two, one.",
-  "instruction": "Complete the notes below. Write NO MORE THAN THREE WORDS for each answer.",
+  "dialogue": "Speaker1: Hello, I'd like to book an appointment...\\nSpeaker2: Certainly, can I take your name please?\\nSpeaker1: Yes, it's Dr. Evelyn Reed. Evelyn is spelled E-V-E-L-Y-N.\\nSpeaker2: Thank you. And your phone number?\\nSpeaker1: It's oh-seven-seven, triple two, five, nine.",
+  "instruction": "Complete the notes below. Write NO MORE THAN THREE WORDS AND/OR A NUMBER for each answer.",
   "questions": [
     {
       "question_number": 1,
-      "question_text": "Customer's surname: _____",
-      "correct_answer": "Sharma",
-      "explanation": "Speaker1 spells out S-H-A-R-M-A"
+      "question_text": "Doctor's first name: _____",
+      "correct_answer": "Evelyn",
+      "explanation": "Speaker1 spells out E-V-E-L-Y-N for Evelyn (the blank portion)"
+    },
+    {
+      "question_number": 2,
+      "question_text": "Phone number last three digits: _____",
+      "correct_answer": "259",
+      "explanation": "Speaker says 'five, nine' for the last digits"
     }
   ]
 }`;
@@ -1098,16 +1112,17 @@ Return ONLY valid JSON in this exact format:
     
     // Standard Fill-in-Blank (no spelling mode)
     return basePrompt + `2. Create ${questionCount} fill-in-the-blank questions.
-   - IMPORTANT: Vary answer lengths - use ONE word, TWO words, or THREE words
-   - Some answers should be exactly 1 word (e.g., "Tuesday", "1985")
+   - IMPORTANT: Vary answer lengths - use ONE word, TWO words, or THREE words AND/OR a number
+   - Some answers should be exactly 1 word (e.g., "Tuesday", "registration")
    - Some answers should be exactly 2 words (e.g., "next Monday", "room three")
    - Some answers can be 3 words (e.g., "main conference hall")
-   - Maximum allowed is 3 words, but do NOT make all answers the same length
+   - Numbers are acceptable answers: "1985", "15", "222"
+   - Maximum allowed is 3 words AND/OR a number, but do NOT make all answers the same length
 
 Return ONLY valid JSON in this exact format:
 {
   "dialogue": "Speaker1: Hello, welcome to the museum...\\nSpeaker2: Thank you...",
-  "instruction": "Complete the notes below. Write NO MORE THAN THREE WORDS for each answer.",
+  "instruction": "Complete the notes below. Write NO MORE THAN THREE WORDS AND/OR A NUMBER for each answer.",
   "questions": [
     {
       "question_number": 1,
@@ -1128,16 +1143,17 @@ CRITICAL RULES:
 2. Use inline blanks with __ (double underscores) within cell content.
    - Example: "Morning session starts with __" where __ is the blank
 3. DISTRIBUTE blanks across BOTH column 2 AND column 3. Do NOT put all blanks only in one column.
-4. Answer length MUST VARY - use ONE word, TWO words, or THREE words:
+4. Answer length MUST VARY - use ONE word, TWO words, or THREE words AND/OR a number:
    - Some answers should be exactly 1 word (e.g., "registration")
    - Some answers should be exactly 2 words (e.g., "coffee break")
    - Some answers can be 3 words (e.g., "main conference room")
-   - Maximum allowed is 3 words, but do NOT make all answers the same length
+   - Numbers are acceptable: "15", "9:30", "1985"
+   - Maximum allowed is 3 words AND/OR a number, but do NOT make all answers the same length
 
 Return ONLY valid JSON in this exact format:
 {
   "dialogue": "Speaker1: Let me explain the schedule...\\nSpeaker2: Yes, please...",
-  "instruction": "Complete the table below. Write NO MORE THAN THREE WORDS for each answer.",
+  "instruction": "Complete the table below. Write NO MORE THAN THREE WORDS AND/OR A NUMBER for each answer.",
   "table_data": [
     [{"content": "Time", "is_header": true}, {"content": "Activity", "is_header": true}, {"content": "Location", "is_header": true}],
     [{"content": "9:00 AM"}, {"content": "Session starts with __", "has_question": true, "question_number": 1}, {"content": "Main Hall"}],
@@ -1269,13 +1285,13 @@ Return ONLY valid JSON in this exact format:
 
     case 'NOTE_COMPLETION':
       return basePrompt + `2. Create a note completion task with ${questionCount} blanks organized in categories.
-   - IMPORTANT: Vary answer lengths - use ONE word, TWO words, or THREE words
-   - Maximum allowed is 3 words, but do NOT make all answers the same length
+   - IMPORTANT: Vary answer lengths - use ONE word, TWO words, or THREE words AND/OR a number
+   - Maximum allowed is 3 words AND/OR a number, but do NOT make all answers the same length
 
 Return ONLY valid JSON in this exact format:
 {
   "dialogue": "Speaker1: Let me explain the key points...\\nSpeaker2: Please go ahead...",
-  "instruction": "Complete the notes below. Write NO MORE THAN THREE WORDS for each answer.",
+  "instruction": "Complete the notes below. Write NO MORE THAN THREE WORDS AND/OR A NUMBER for each answer.",
   "note_sections": [
     {
       "title": "Main Topic",
@@ -1301,13 +1317,13 @@ Return ONLY valid JSON in this exact format:
     default:
       return basePrompt + `2. Create ${questionCount} fill-in-the-blank questions.
    - Each question MUST include a blank indicated by 2+ underscores (e.g., "_____") where the answer goes.
-   - IMPORTANT: Vary answer lengths - use ONE word, TWO words, or THREE words
-   - Maximum allowed is 3 words, but do NOT make all answers the same length
+   - IMPORTANT: Vary answer lengths - use ONE word, TWO words, or THREE words AND/OR a number
+   - Maximum allowed is 3 words AND/OR a number, but do NOT make all answers the same length
 
 Return ONLY valid JSON in this exact format:
 {
   "dialogue": "Speaker1: dialogue...\\nSpeaker2: response...",
-  "instruction": "Complete the notes below. Write NO MORE THAN THREE WORDS for each answer.",
+  "instruction": "Complete the notes below. Write NO MORE THAN THREE WORDS AND/OR A NUMBER for each answer.",
   "questions": [
     {
       "question_number": 1,

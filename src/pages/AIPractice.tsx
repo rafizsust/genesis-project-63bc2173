@@ -98,8 +98,8 @@ const READING_PASSAGE_PRESETS = {
 // Listening configuration - audio length settings
 const LISTENING_AUDIO_CONFIG = {
   minSeconds: 60,   // 1 min
-  maxSeconds: 300,  // 5 min
-  defaultSeconds: 180, // 3 min
+  maxSeconds: 240,  // 4 min max
+  defaultSeconds: 180, // 3 min default
 };
 
 // Speaker configuration options (Gemini TTS voices)
@@ -170,7 +170,7 @@ export default function AIPractice() {
 
   // Listening-specific configuration
   const [listeningAudioDuration, setListeningAudioDuration] = useState(LISTENING_AUDIO_CONFIG.defaultSeconds);
-  const [listeningQuestionCount, setListeningQuestionCount] = useState(3);
+  const [listeningQuestionCount, setListeningQuestionCount] = useState(5);
   
   // IELTS Part 1 Spelling Mode configuration for Fill-in-Blank
   const [spellingModeEnabled, setSpellingModeEnabled] = useState(false);
@@ -383,9 +383,10 @@ export default function AIPractice() {
   const getListeningEstimate = () => {
     const durationSec = listeningAudioDuration;
     
-    if (durationSec <= 120) return { text: '60-90 seconds', seconds: 75 };
-    if (durationSec <= 180) return { text: '90-150 seconds', seconds: 120 };
-    return { text: '150-240 seconds', seconds: 195 };
+    if (durationSec <= 90) return { text: '60-120 seconds', seconds: 90 };
+    if (durationSec <= 120) return { text: '90-150 seconds', seconds: 120 };
+    if (durationSec <= 180) return { text: '2-3 minutes', seconds: 150 };
+    return { text: '3-4 minutes', seconds: 210 };
   };
 
   // Calculate estimated generation time for reading based on passage length
@@ -779,19 +780,19 @@ export default function AIPractice() {
                     <div className="flex justify-between text-xs text-muted-foreground">
                       <span>1 min</span>
                       <span>3 min (Default)</span>
-                      <span>5 min</span>
+                      <span>4 min</span>
                     </div>
 
                     {/* Estimated Generation Time */}
                     {(() => {
                       const durationSec = listeningAudioDuration;
-                      const estimatedGenTime = durationSec <= 120 ? '60-90' : durationSec <= 180 ? '90-150' : '150-240';
+                      const estimatedGenTime = durationSec <= 90 ? '60-120 sec' : durationSec <= 120 ? '90-150 sec' : durationSec <= 180 ? '2-3 min' : '3-4 min';
                       return (
                         <div className="flex items-center gap-2 p-3 rounded-lg bg-primary/5 border border-primary/20">
                           <Clock className="w-4 h-4 text-primary" />
                           <span className="text-sm">
                             <span className="text-muted-foreground">Estimated generation time:</span>{' '}
-                            <span className="font-medium text-primary">{estimatedGenTime} seconds</span>
+                            <span className="font-medium text-primary">{estimatedGenTime}</span>
                           </span>
                         </div>
                       );
@@ -880,7 +881,7 @@ export default function AIPractice() {
                     />
                     <div className="flex justify-between text-xs text-muted-foreground">
                       <span>1 (Quick)</span>
-                      <span>3 (Default)</span>
+                      <span>5 (Default)</span>
                       <span>7 (Max)</span>
                     </div>
                   </div>
@@ -894,15 +895,15 @@ export default function AIPractice() {
                     <Slider
                       value={[audioSpeed]}
                       onValueChange={([v]) => setAudioSpeed(v)}
-                      min={0.75}
-                      max={1.25}
-                      step={0.05}
+                      min={0.5}
+                      max={2.0}
+                      step={0.1}
                       className="w-full"
                     />
                     <div className="flex justify-between text-xs text-muted-foreground">
-                      <span>Slower</span>
-                      <span>Normal</span>
-                      <span>Faster</span>
+                      <span>0.5x</span>
+                      <span>1.0x</span>
+                      <span>2.0x</span>
                     </div>
                   </div>
                 </CardContent>
