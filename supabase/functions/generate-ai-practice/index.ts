@@ -728,9 +728,13 @@ Return ONLY valid JSON in this exact format:
     case 'TABLE_COMPLETION':
       return basePrompt + `2. Create a table completion task with ${questionCount} blanks to fill.
 
-CRITICAL RULE: Each correct_answer MUST be NO MORE THAN TWO WORDS. Never use three-word answers.
-- If you need to express something that would naturally be 3+ words, rephrase it or pick the 2 most important words.
-- Example: Instead of "greenhouse gas emissions" use "gas emissions" or "greenhouse gases".
+CRITICAL RULES:
+1. Each correct_answer MUST be NO MORE THAN TWO WORDS. Never use three-word answers.
+   - If you need to express something that would naturally be 3+ words, rephrase it or pick the 2 most important words.
+   - Example: Instead of "greenhouse gas emissions" use "gas emissions" or "greenhouse gases".
+2. Tables MUST have EXACTLY 3 COLUMNS (no more, no less).
+3. Use inline blanks with __ (double underscores) within cell content, NOT separate cells for blanks.
+   - Example: "Clean air and water, pollination of crops, and __" where __ is the blank
 
 Return ONLY valid JSON in this exact format:
 {
@@ -740,10 +744,10 @@ Return ONLY valid JSON in this exact format:
   },
   "instruction": "Complete the table below. Choose NO MORE THAN TWO WORDS from the passage for each answer.",
   "table_data": [
-    [{"content": "Category", "is_header": true}, {"content": "Details", "is_header": true}],
-    [{"content": "First item"}, {"content": "", "has_question": true, "question_number": 1}],
-    [{"content": "Second item"}, {"content": "", "has_question": true, "question_number": 2}],
-    [{"content": "Third item"}, {"content": "", "has_question": true, "question_number": 3}]
+    [{"content": "Category", "is_header": true}, {"content": "Details", "is_header": true}, {"content": "Impact", "is_header": true}],
+    [{"content": "First item"}, {"content": "Description text and __", "has_question": true, "question_number": 1}, {"content": "Positive"}],
+    [{"content": "Second item"}, {"content": "More text including __", "has_question": true, "question_number": 2}, {"content": "Moderate"}],
+    [{"content": "Third item"}, {"content": "Additional info about __", "has_question": true, "question_number": 3}, {"content": "Significant"}]
   ],
   "questions": [
     {"question_number": 1, "question_text": "Fill in blank 1", "correct_answer": "two words", "explanation": "Found in paragraph B"},
@@ -984,14 +988,20 @@ Return ONLY valid JSON in this exact format:
     case 'TABLE_COMPLETION':
       return basePrompt + `2. Create a table completion task with ${questionCount} blanks.
 
+CRITICAL RULES:
+1. Tables MUST have EXACTLY 3 COLUMNS (no more, no less).
+2. Use inline blanks with __ (double underscores) within cell content.
+   - Example: "Morning session starts with __" where __ is the blank
+3. Each correct_answer MUST be NO MORE THAN TWO WORDS.
+
 Return ONLY valid JSON in this exact format:
 {
   "dialogue": "Speaker1: Let me explain the schedule...\\nSpeaker2: Yes, please...",
   "instruction": "Complete the table below. Write NO MORE THAN TWO WORDS for each answer.",
   "table_data": [
-    [{"content": "Time", "is_header": true}, {"content": "Activity", "is_header": true}],
-    [{"content": "9:00 AM"}, {"content": "", "has_question": true, "question_number": 1}],
-    [{"content": "11:00 AM"}, {"content": "", "has_question": true, "question_number": 2}]
+    [{"content": "Time", "is_header": true}, {"content": "Activity", "is_header": true}, {"content": "Location", "is_header": true}],
+    [{"content": "9:00 AM"}, {"content": "Session starts with __", "has_question": true, "question_number": 1}, {"content": "Main Hall"}],
+    [{"content": "11:00 AM"}, {"content": "Break followed by __", "has_question": true, "question_number": 2}, {"content": "Room B"}]
   ],
   "questions": [
     {"question_number": 1, "question_text": "Activity at 9 AM", "correct_answer": "registration", "explanation": "Speaker mentions registration at 9"},

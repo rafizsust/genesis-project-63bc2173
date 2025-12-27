@@ -102,6 +102,7 @@ export function MultipleChoice({
                   className="ielts-mcq-indicator"
                 />
                 <span className="text-sm leading-relaxed flex-1">
+                  <span className="font-medium">{optionLabel}.</span>{' '}
                   <QuestionTextWithTools
                     testId={testId}
                     contentId={`${question.id}-option-${idx}`}
@@ -172,6 +173,7 @@ export function MultipleChoice({
               className="ielts-checkbox"
             />
             <span className="text-sm leading-relaxed flex-1">
+              <span className="font-medium">{optionLabel}.</span>{' '}
               <QuestionTextWithTools
                 testId={testId}
                 contentId={`${question.id}-option-${idx}`}

@@ -91,8 +91,8 @@ const DIFFICULTY_OPTIONS: { value: DifficultyLevel; label: string; color: string
 // Reading passage specifications - paragraph-based
 const READING_PASSAGE_PRESETS = {
   short: { paragraphs: 2, label: 'Short (2 paragraphs)' },
-  medium: { paragraphs: 3, label: 'Medium (3 paragraphs)' },
-  long: { paragraphs: 5, label: 'Long (5 paragraphs)' },
+  medium: { paragraphs: 4, label: 'Medium (4 paragraphs)' },
+  long: { paragraphs: 6, label: 'Long (6 paragraphs)' },
 };
 
 // Listening configuration - Gemini TTS limits:
@@ -124,7 +124,7 @@ export default function AIPractice() {
 
   // Reading-specific configuration
   const [readingPassagePreset, setReadingPassagePreset] = useState<keyof typeof READING_PASSAGE_PRESETS>('medium');
-  const [customQuestionCount, setCustomQuestionCount] = useState(5);
+  const [customQuestionCount, setCustomQuestionCount] = useState(3);
 
   // Listening-specific configuration
   const [listeningTranscriptPreset, setListeningTranscriptPreset] = useState<keyof typeof LISTENING_TRANSCRIPT_PRESETS>('standard');
@@ -270,9 +270,24 @@ export default function AIPractice() {
       console.error('Generation error:', err);
       clearInterval(stepInterval);
       playErrorSound();
+      
+      // Parse error message for user-friendly display
+      let errorMessage = err.message || 'Failed to generate practice test. Please try again.';
+      
+      // Handle common API errors with user-friendly messages
+      if (errorMessage.includes('quota') || errorMessage.includes('RESOURCE_EXHAUSTED') || errorMessage.includes('429')) {
+        errorMessage = 'AI quota limit reached. Please wait a few minutes and try again, or update your Gemini API key in Settings.';
+      } else if (errorMessage.includes('PERMISSION_DENIED') || errorMessage.includes('403')) {
+        errorMessage = 'API access denied. Please check your Gemini API key in Settings.';
+      } else if (errorMessage.includes('non-2xx') || errorMessage.includes('status code')) {
+        errorMessage = 'AI service temporarily unavailable. Please try again in a moment.';
+      } else if (errorMessage.includes('API key') || errorMessage.includes('authentication')) {
+        errorMessage = 'Invalid API key. Please update your Gemini API key in Settings.';
+      }
+      
       toast({
         title: 'Generation Failed',
-        description: err.message || 'Failed to generate practice test. Please try again.',
+        description: errorMessage,
         variant: 'destructive',
       });
     } finally {
@@ -472,13 +487,13 @@ export default function AIPractice() {
                       value={[customQuestionCount]}
                       onValueChange={([v]) => setCustomQuestionCount(v)}
                       min={1}
-                      max={10}
+                      max={7}
                       step={1}
                     />
                     <div className="flex justify-between text-xs text-muted-foreground">
                       <span>1 (Quick)</span>
-                      <span>5 (Standard)</span>
-                      <span>10 (Comprehensive)</span>
+                      <span>3 (Default)</span>
+                      <span>7 (Max)</span>
                     </div>
                   </div>
                 </CardContent>

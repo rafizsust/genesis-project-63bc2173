@@ -157,81 +157,80 @@ export function ReadingTableCompletion({
                       }}
                     >
                       {isQuestionCell ? (
-                        <div className="leading-[2.2]">
-                          <span className="text-black whitespace-pre-wrap">
-                            {hasInlineBlank ? (
-                              // Render content with inline input boxes
-                              parts.map((part, partIndex) => (
-                                <span key={partIndex} className="align-middle">
-                                  {/* Text before/after blank */}
-                                  {part && (
-                                    <QuestionTextWithTools
-                                      testId={testId}
-                                      contentId={`${questionId}-row-${rowIndex}-col-${colIndex}-part-${partIndex}`}
-                                      text={part}
-                                      fontSize={fontSize}
-                                      renderRichText={renderRichText}
-                                      isActive={false}
-                                      as="span"
-                                    />
-                                  )}
-                                  
-                                  {/* Input field for blank - same style as listening fill-in-blank */}
-                                  {partIndex < parts.length - 1 && (
-                                    <input
-                                      type="text"
-                                      value={currentAnswers[partIndex] || ''}
-                                      onChange={(e) => {
-                                        const newAnswers = [...currentAnswers];
-                                        newAnswers[partIndex] = e.target.value;
-                                        
-                                        const updatedAnswer = (parts.length - 1 > 1) 
-                                          ? newAnswers.join(',') 
-                                          : newAnswers[0];
+                        <span className="text-black" style={{ lineHeight: '2.2' }}>
+                          {hasInlineBlank ? (
+                            // Render content with inline input boxes - all inline
+                            parts.map((part, partIndex) => (
+                              <span key={partIndex}>
+                                {/* Text before/after blank */}
+                                {part && (
+                                  <QuestionTextWithTools
+                                    testId={testId}
+                                    contentId={`${questionId}-row-${rowIndex}-col-${colIndex}-part-${partIndex}`}
+                                    text={part}
+                                    fontSize={fontSize}
+                                    renderRichText={renderRichText}
+                                    isActive={false}
+                                    as="span"
+                                  />
+                                )}
+                                
+                                {/* Input field for blank - inline with text */}
+                                {partIndex < parts.length - 1 && (
+                                  <input
+                                    type="text"
+                                    value={currentAnswers[partIndex] || ''}
+                                    onChange={(e) => {
+                                      const newAnswers = [...currentAnswers];
+                                      newAnswers[partIndex] = e.target.value;
+                                      
+                                      const updatedAnswer = (parts.length - 1 > 1) 
+                                        ? newAnswers.join(',') 
+                                        : newAnswers[0];
 
-                                        onAnswerChange(cell.question_number!, updatedAnswer);
-                                      }}
-                                      onFocus={() => setCurrentQuestion(cell.question_number!)}
-                                      placeholder={String(cell.question_number)}
-                                      className={cn(
-                                        "ielts-input h-7 text-sm font-normal px-2 min-w-[174px] max-w-full rounded-[3px] text-center placeholder:text-center placeholder:font-bold placeholder:text-foreground/70",
-                                        "bg-background border border-[hsl(var(--ielts-input-border))] text-foreground",
-                                        "focus:outline-none focus:border-[hsl(var(--ielts-input-focus))] focus:ring-0",
-                                        "transition-colors align-middle mx-1"
-                                      )}
-                                    />
-                                  )}
-                                </span>
-                              ))
-                            ) : (
-                              // Question cell without inline blanks - show standalone input
-                              <span className="flex items-center gap-2">
-                                <QuestionTextWithTools
-                                  testId={testId}
-                                  contentId={`${questionId}-row-${rowIndex}-col-${colIndex}-text`}
-                                  text={cell.content}
-                                  fontSize={fontSize}
-                                  renderRichText={renderRichText}
-                                  isActive={false}
-                                  as="span"
-                                />
-                                <input
-                                  type="text"
-                                  value={currentAnswers[0] || ''}
-                                  onChange={(e) => onAnswerChange(cell.question_number!, e.target.value)}
-                                  onFocus={() => setCurrentQuestion(cell.question_number!)}
-                                  placeholder={String(cell.question_number)}
+                                      onAnswerChange(cell.question_number!, updatedAnswer);
+                                    }}
+                                    onFocus={() => setCurrentQuestion(cell.question_number!)}
+                                    placeholder={String(cell.question_number)}
                                     className={cn(
-                                      "ielts-input h-7 text-sm font-normal px-2 min-w-[174px] max-w-full rounded-[3px] text-center placeholder:text-center placeholder:font-bold placeholder:text-foreground/70",
-                                    "bg-background border border-[hsl(var(--ielts-input-border))] text-foreground",
-                                    "focus:outline-none focus:border-[hsl(var(--ielts-input-focus))] focus:ring-0",
-                                    "transition-colors"
-                                  )}
-                                />
+                                      "ielts-input h-7 text-sm font-normal px-2 w-28 rounded-[3px] text-center placeholder:text-center placeholder:font-bold placeholder:text-foreground/70",
+                                      "bg-background border border-[hsl(var(--ielts-input-border))] text-foreground",
+                                      "focus:outline-none focus:border-[hsl(var(--ielts-input-focus))] focus:ring-0",
+                                      "transition-colors inline align-middle mx-1"
+                                    )}
+                                  />
+                                )}
                               </span>
-                            )}
-                          </span>
-                        </div>
+                            ))
+                          ) : (
+                            // Question cell without inline blanks - show standalone input inline
+                            <>
+                              <QuestionTextWithTools
+                                testId={testId}
+                                contentId={`${questionId}-row-${rowIndex}-col-${colIndex}-text`}
+                                text={cell.content}
+                                fontSize={fontSize}
+                                renderRichText={renderRichText}
+                                isActive={false}
+                                as="span"
+                              />
+                              {' '}
+                              <input
+                                type="text"
+                                value={currentAnswers[0] || ''}
+                                onChange={(e) => onAnswerChange(cell.question_number!, e.target.value)}
+                                onFocus={() => setCurrentQuestion(cell.question_number!)}
+                                placeholder={String(cell.question_number)}
+                                className={cn(
+                                  "ielts-input h-7 text-sm font-normal px-2 w-28 rounded-[3px] text-center placeholder:text-center placeholder:font-bold placeholder:text-foreground/70",
+                                  "bg-background border border-[hsl(var(--ielts-input-border))] text-foreground",
+                                  "focus:outline-none focus:border-[hsl(var(--ielts-input-focus))] focus:ring-0",
+                                  "transition-colors inline align-middle"
+                                )}
+                              />
+                            </>
+                          )}
+                        </span>
                       ) : (
                         <QuestionTextWithTools
                           testId={testId}
