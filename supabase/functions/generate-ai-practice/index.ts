@@ -331,18 +331,56 @@ async function uploadGeneratedImage(
   }
 }
 
-// Generate TTS audio using Gemini with retry logic for transient errors
-async function generateAudio(apiKey: string, script: string, maxRetries = 3): Promise<{ audioBase64: string; sampleRate: number } | null> {
-  const ttsPrompt = `Read the following conversation slowly and clearly, as if for a language listening test. 
+// Speaker configuration interface
+interface SpeakerVoiceConfig {
+  gender: 'male' | 'female';
+  accent: string;
+  voiceName: string;
+}
+
+interface SpeakerConfigInput {
+  speaker1: SpeakerVoiceConfig;
+  speaker2?: SpeakerVoiceConfig;
+  useTwoSpeakers: boolean;
+}
+
+// Generate TTS audio using Gemini with retry logic and configurable voices
+async function generateAudio(
+  apiKey: string, 
+  script: string, 
+  speakerConfig?: SpeakerConfigInput,
+  maxRetries = 3
+): Promise<{ audioBase64: string; sampleRate: number } | null> {
+  // Get voice names from config or use defaults
+  const speaker1Voice = speakerConfig?.speaker1?.voiceName || 'Kore';
+  const speaker2Voice = speakerConfig?.speaker2?.voiceName || 'Puck';
+  const useTwoSpeakers = speakerConfig?.useTwoSpeakers !== false;
+
+  const ttsPrompt = useTwoSpeakers
+    ? `Read the following conversation slowly and clearly, as if for a language listening test. 
 Use a moderate speaking pace with natural pauses between sentences. 
 Pause briefly (about 1-2 seconds) after each speaker finishes their turn.
-Speaker1 and Speaker2 should have distinct, clear voices:
+The two speakers should have distinct, clear voices:
+
+${script}`
+    : `Read the following monologue slowly and clearly, as if for a language listening test. 
+Use a moderate speaking pace with natural pauses between sentences.
 
 ${script}`;
 
+  // Build voice configs based on whether we have 1 or 2 speakers
+  const speakerVoiceConfigs = useTwoSpeakers
+    ? [
+        { speaker: "Speaker1", voiceConfig: { prebuiltVoiceConfig: { voiceName: speaker1Voice } } },
+        { speaker: "Speaker2", voiceConfig: { prebuiltVoiceConfig: { voiceName: speaker2Voice } } },
+      ]
+    : [
+        { speaker: "Speaker1", voiceConfig: { prebuiltVoiceConfig: { voiceName: speaker1Voice } } },
+      ];
+
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      console.log(`Generating TTS audio (attempt ${attempt}/${maxRetries})...`);
+      console.log(`Generating TTS audio (attempt ${attempt}/${maxRetries}) with voices: ${speaker1Voice}${useTwoSpeakers ? `, ${speaker2Voice}` : ''}...`);
       
       const response = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${apiKey}`,
@@ -355,10 +393,7 @@ ${script}`;
               responseModalities: ["AUDIO"],
               speechConfig: {
                 multiSpeakerVoiceConfig: {
-                  speakerVoiceConfigs: [
-                    { speaker: "Speaker1", voiceConfig: { prebuiltVoiceConfig: { voiceName: "Kore" } } },
-                    { speaker: "Speaker2", voiceConfig: { prebuiltVoiceConfig: { voiceName: "Puck" } } },
-                  ],
+                  speakerVoiceConfigs,
                 },
               },
             },
@@ -414,6 +449,7 @@ interface ListeningConfig {
   durationSeconds?: number;
   wordCount?: number;
   useWordCountMode?: boolean;
+  speakerConfig?: SpeakerConfigInput;
 }
 
 // Reading question type prompts - generate structured data matching DB schema
@@ -970,7 +1006,28 @@ function getListeningPrompt(
   targetDurationSeconds = Math.min(480, Math.max(30, targetDurationSeconds));
   
   const wordRange = `${targetWordCount - 30}-${targetWordCount + 30}`;
-  
+
+  // Determine if we use 1 or 2 speakers based on config
+  const useTwoSpeakers = listeningConfig?.speakerConfig?.useTwoSpeakers !== false;
+
+  // Build prompt for realistic character names
+  const characterInstructions = useTwoSpeakers
+    ? `1. Create a dialogue script between two characters that is:
+   - ${wordRange} words total (approximately ${targetDurationSeconds} seconds when spoken)
+   - Natural and conversational with realistic names/roles (e.g., "Receptionist:", "Mark:", "Dr. Smith:", "Sarah:")
+   - NEVER use generic labels like "Speaker 1" or "Speaker 2" in the transcript
+   - Invent context-appropriate names or roles based on the scenario
+   - In the output JSON, map the first character to "Speaker1:" and second to "Speaker2:" for TTS processing
+   - Contains specific details (names, numbers, dates, locations)
+   
+   IMPORTANT: The dialogue field in JSON MUST use "Speaker1:" and "Speaker2:" prefixes (for audio generation),
+   but the conversation content should reference the characters by their realistic names.`
+    : `1. Create a monologue script by a single speaker that is:
+   - ${wordRange} words total (approximately ${targetDurationSeconds} seconds when spoken)
+   - Clear and informative, like a tour guide, lecturer, or announcer
+   - Use "Speaker1:" prefix for all lines (required for TTS)
+   - Contains specific details (names, numbers, dates, locations)`;
+
   const basePrompt = `Generate an IELTS Listening test section with the following specifications:
 
 Topic: ${topic}
@@ -978,11 +1035,7 @@ Scenario: ${scenario.description}
 Difficulty: ${difficulty} (${difficultyDesc})
 
 Requirements:
-1. Create a dialogue script between Speaker1 and Speaker2 that is:
-   - ${wordRange} words total (approximately ${targetDurationSeconds} seconds when spoken)
-   - Natural and conversational
-   - Contains specific details (names, numbers, dates, locations)
-   - Format each line as: "Speaker1: dialogue text" or "Speaker2: dialogue text"
+${characterInstructions}
 
 `;
 
@@ -1462,8 +1515,8 @@ serve(async (req) => {
         });
       }
 
-      // Generate audio
-      const audio = await generateAudio(geminiApiKey, parsed.dialogue);
+      // Generate audio with speaker configuration
+      const audio = await generateAudio(geminiApiKey, parsed.dialogue, listeningConfig?.speakerConfig);
 
       // Build group options based on question type
       let groupOptions: any = undefined;

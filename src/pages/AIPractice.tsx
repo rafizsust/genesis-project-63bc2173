@@ -10,6 +10,7 @@ import { Slider } from '@/components/ui/slider';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { AILoadingScreen } from '@/components/common/AILoadingScreen';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
@@ -100,6 +101,52 @@ const LISTENING_TRANSCRIPT_PRESETS = {
   full: { durationSeconds: 420, wordCount: 1050, label: 'Full (7 min)' },
 };
 
+// Speaker configuration options (Gemini TTS voices)
+const SPEAKER_GENDERS = [
+  { value: 'male', label: 'Male' },
+  { value: 'female', label: 'Female' },
+];
+
+const SPEAKER_ACCENTS = [
+  { value: 'en-GB', label: 'British' },
+  { value: 'en-AU', label: 'Australian' },
+  { value: 'en-US', label: 'US' },
+  { value: 'en-CA', label: 'Canadian' },
+];
+
+// Gemini TTS voice names mapped by gender
+const SPEAKER_VOICES = {
+  male: [
+    { value: 'Charon', label: 'Charon (Informative)' },
+    { value: 'Puck', label: 'Puck (Upbeat)' },
+    { value: 'Fenrir', label: 'Fenrir (Excitable)' },
+    { value: 'Orus', label: 'Orus (Firm)' },
+    { value: 'Iapetus', label: 'Iapetus (Clear)' },
+  ],
+  female: [
+    { value: 'Aoede', label: 'Aoede (Breezy)' },
+    { value: 'Kore', label: 'Kore (Firm)' },
+    { value: 'Leda', label: 'Leda (Youthful)' },
+    { value: 'Zephyr', label: 'Zephyr (Bright)' },
+    { value: 'Callirrhoe', label: 'Callirrhoe (Easy-going)' },
+  ],
+};
+
+// Question types that require 2 speakers
+const MULTI_SPEAKER_QUESTION_TYPES: ListeningQuestionType[] = [
+  'FILL_IN_BLANK',
+  'MULTIPLE_CHOICE_SINGLE',
+  'MULTIPLE_CHOICE_MULTIPLE',
+  'MATCHING_CORRECT_LETTER',
+  'DRAG_AND_DROP_OPTIONS',
+];
+
+interface SpeakerConfig {
+  gender: 'male' | 'female';
+  accent: string;
+  voiceName: string;
+}
+
 export default function AIPractice() {
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -123,6 +170,21 @@ export default function AIPractice() {
   // Listening-specific configuration
   const [listeningTranscriptPreset, setListeningTranscriptPreset] = useState<keyof typeof LISTENING_TRANSCRIPT_PRESETS>('standard');
   const [listeningQuestionCount, setListeningQuestionCount] = useState(3);
+
+  // Speaker configuration
+  const [speaker1Config, setSpeaker1Config] = useState<SpeakerConfig>({
+    gender: 'female',
+    accent: 'en-GB',
+    voiceName: 'Kore',
+  });
+  const [speaker2Config, setSpeaker2Config] = useState<SpeakerConfig>({
+    gender: 'male',
+    accent: 'en-GB',
+    voiceName: 'Puck',
+  });
+
+  // Determine if current question type needs 2 speakers
+  const needsTwoSpeakers = MULTI_SPEAKER_QUESTION_TYPES.includes(listeningQuestionType);
 
   // Loading state
   const [isGenerating, setIsGenerating] = useState(false);
@@ -178,12 +240,17 @@ export default function AIPractice() {
         paragraphCount: READING_PASSAGE_PRESETS[readingPassagePreset].paragraphs,
       } : undefined;
 
-      // Build listening-specific configuration
+      // Build listening-specific configuration with speaker settings
       const listeningConfig = activeModule === 'listening' ? {
         transcriptPreset: listeningTranscriptPreset,
         durationSeconds: LISTENING_TRANSCRIPT_PRESETS[listeningTranscriptPreset].durationSeconds,
         wordCount: LISTENING_TRANSCRIPT_PRESETS[listeningTranscriptPreset].wordCount,
         useWordCountMode: false,
+        speakerConfig: {
+          speaker1: speaker1Config,
+          speaker2: needsTwoSpeakers ? speaker2Config : undefined,
+          useTwoSpeakers: needsTwoSpeakers,
+        },
       } : undefined;
 
       const { data, error } = await supabase.functions.invoke('generate-ai-practice', {
@@ -544,6 +611,137 @@ export default function AIPractice() {
                         </button>
                       ))}
                     </div>
+                  </div>
+
+                  {/* Speaker Configuration */}
+                  <div className="space-y-4 border-t pt-6">
+                    <Label className="text-base font-medium flex items-center gap-2">
+                      <Mic className="w-4 h-4" />
+                      Speaker Configuration
+                    </Label>
+                    <p className="text-sm text-muted-foreground">
+                      {needsTwoSpeakers 
+                        ? 'Configure both speakers for the dialogue.' 
+                        : 'Configure the narrator voice for this question type.'}
+                    </p>
+
+                    {/* Speaker 1 */}
+                    <div className="p-4 rounded-lg border bg-card space-y-4">
+                      <div className="font-medium text-sm">Speaker 1</div>
+                      <div className="grid grid-cols-3 gap-3">
+                        <div className="space-y-2">
+                          <Label className="text-xs text-muted-foreground">Gender</Label>
+                          <Select
+                            value={speaker1Config.gender}
+                            onValueChange={(v: 'male' | 'female') => {
+                              const defaultVoice = SPEAKER_VOICES[v][0].value;
+                              setSpeaker1Config(prev => ({ ...prev, gender: v, voiceName: defaultVoice }));
+                            }}
+                          >
+                            <SelectTrigger className="h-9">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {SPEAKER_GENDERS.map(g => (
+                                <SelectItem key={g.value} value={g.value}>{g.label}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="space-y-2">
+                          <Label className="text-xs text-muted-foreground">Accent</Label>
+                          <Select
+                            value={speaker1Config.accent}
+                            onValueChange={(v) => setSpeaker1Config(prev => ({ ...prev, accent: v }))}
+                          >
+                            <SelectTrigger className="h-9">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {SPEAKER_ACCENTS.map(a => (
+                                <SelectItem key={a.value} value={a.value}>{a.label}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="space-y-2">
+                          <Label className="text-xs text-muted-foreground">Voice</Label>
+                          <Select
+                            value={speaker1Config.voiceName}
+                            onValueChange={(v) => setSpeaker1Config(prev => ({ ...prev, voiceName: v }))}
+                          >
+                            <SelectTrigger className="h-9">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {SPEAKER_VOICES[speaker1Config.gender].map(voice => (
+                                <SelectItem key={voice.value} value={voice.value}>{voice.label}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Speaker 2 - only shown for multi-speaker question types */}
+                    {needsTwoSpeakers && (
+                      <div className="p-4 rounded-lg border bg-card space-y-4">
+                        <div className="font-medium text-sm">Speaker 2</div>
+                        <div className="grid grid-cols-3 gap-3">
+                          <div className="space-y-2">
+                            <Label className="text-xs text-muted-foreground">Gender</Label>
+                            <Select
+                              value={speaker2Config.gender}
+                              onValueChange={(v: 'male' | 'female') => {
+                                const defaultVoice = SPEAKER_VOICES[v][0].value;
+                                setSpeaker2Config(prev => ({ ...prev, gender: v, voiceName: defaultVoice }));
+                              }}
+                            >
+                              <SelectTrigger className="h-9">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {SPEAKER_GENDERS.map(g => (
+                                  <SelectItem key={g.value} value={g.value}>{g.label}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="space-y-2">
+                            <Label className="text-xs text-muted-foreground">Accent</Label>
+                            <Select
+                              value={speaker2Config.accent}
+                              onValueChange={(v) => setSpeaker2Config(prev => ({ ...prev, accent: v }))}
+                            >
+                              <SelectTrigger className="h-9">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {SPEAKER_ACCENTS.map(a => (
+                                  <SelectItem key={a.value} value={a.value}>{a.label}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="space-y-2">
+                            <Label className="text-xs text-muted-foreground">Voice</Label>
+                            <Select
+                              value={speaker2Config.voiceName}
+                              onValueChange={(v) => setSpeaker2Config(prev => ({ ...prev, voiceName: v }))}
+                            >
+                              <SelectTrigger className="h-9">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {SPEAKER_VOICES[speaker2Config.gender].map(voice => (
+                                  <SelectItem key={voice.value} value={voice.value}>{voice.label}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   {/* Transcript Configuration */}
