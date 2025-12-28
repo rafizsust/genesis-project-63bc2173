@@ -124,76 +124,61 @@ serve(async (req) => {
       });
     }
 
-    const { items, voiceName }: { items: TtsItem[]; voiceName?: string } = await req.json();
+    // Support single item generation (new) or batch (legacy)
+    const body = await req.json();
+    const { item, voiceName }: { item?: TtsItem; voiceName?: string } = body;
 
-    if (!Array.isArray(items) || items.length === 0) {
-      return new Response(JSON.stringify({ error: "items[] is required" }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    const { data: secretData, error: secretError } = await supabaseClient
-      .from("user_secrets")
-      .select("encrypted_value")
-      .eq("user_id", user.id)
-      .eq("secret_name", "GEMINI_API_KEY")
-      .single();
-
-    if (secretError || !secretData) {
-      return new Response(
-        JSON.stringify({ error: "Gemini API key not found. Please add your API key in Settings." }),
-        {
+    // Single item mode - generate ONE clip quickly
+    if (item) {
+      if (!item.key || !item.text) {
+        return new Response(JSON.stringify({ error: "item.key and item.text are required" }), {
           status: 400,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
-        }
+        });
+      }
+
+      const { data: secretData, error: secretError } = await supabaseClient
+        .from("user_secrets")
+        .select("encrypted_value")
+        .eq("user_id", user.id)
+        .eq("secret_name", "GEMINI_API_KEY")
+        .single();
+
+      if (secretError || !secretData) {
+        return new Response(
+          JSON.stringify({ error: "Gemini API key not found. Please add your API key in Settings." }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const appEncryptionKey = Deno.env.get("app_encryption_key");
+      if (!appEncryptionKey) throw new Error("app_encryption_key not configured");
+
+      const geminiApiKey = await decryptApiKey(secretData.encrypted_value, appEncryptionKey);
+      const resolvedVoice = (voiceName || "Kore").trim();
+
+      console.log("generate-gemini-tts: single clip:", item.key, "voice=", resolvedVoice);
+
+      const audioBase64 = await generateTtsPcmBase64({
+        apiKey: geminiApiKey,
+        text: item.text,
+        voiceName: resolvedVoice,
+      });
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          clip: { key: item.key, text: item.text, audioBase64, sampleRate: 24000 },
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    const appEncryptionKey = Deno.env.get("app_encryption_key");
-    if (!appEncryptionKey) throw new Error("app_encryption_key not configured");
-
-    const geminiApiKey = await decryptApiKey(secretData.encrypted_value, appEncryptionKey);
-
-    const resolvedVoice = (voiceName || "Kore").trim();
-    console.log("generate-gemini-tts: user=", user.id, "items=", items.length, "voice=", resolvedVoice);
-
-    const clips: Array<{ key: string; text: string; audioBase64: string; sampleRate: number }> = [];
-
-    // Process items with delay between calls to respect rate limits
-    // Free tier: 3 req/min. Retry-After suggests ~12s wait, we use 15s to be safe.
-    const DELAY_BETWEEN_CALLS_MS = 15000;
-    
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i];
-      if (!item?.key || !item?.text) continue;
-      
-      // Add delay before each call except the first one
-      if (i > 0) {
-        console.log(`Waiting ${DELAY_BETWEEN_CALLS_MS}ms before TTS call ${i + 1}/${items.length}...`);
-        await sleep(DELAY_BETWEEN_CALLS_MS);
-      }
-      
-      try {
-        const audioBase64 = await generateTtsPcmBase64({ apiKey: geminiApiKey, text: item.text, voiceName: resolvedVoice });
-        clips.push({ key: item.key, text: item.text, audioBase64, sampleRate: 24000 });
-        console.log(`Generated clip ${i + 1}/${items.length}: ${item.key}`);
-      } catch (err) {
-        console.error(`Failed to generate clip ${item.key}:`, err);
-        // Continue with other clips instead of failing entirely
-      }
-    }
-
-    if (clips.length === 0) {
-      return new Response(JSON.stringify({ error: "Failed to generate any audio clips" }), {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    return new Response(JSON.stringify({ success: true, clips }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    // Legacy batch mode - kept for compatibility but should not be used
+    return new Response(
+      JSON.stringify({ error: "Batch mode deprecated. Use single item mode instead." }),
+      { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
   } catch (error: unknown) {
     console.error("generate-gemini-tts error:", error);
     const message = error instanceof Error ? error.message : "Unknown error";

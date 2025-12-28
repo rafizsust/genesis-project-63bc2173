@@ -120,6 +120,7 @@ export default function AIPracticeSpeakingTest() {
   const [isExaminerReady, setIsExaminerReady] = useState(false);
   const [isPreparingExaminer, setIsPreparingExaminer] = useState(false);
   const [ttsClips, setTtsClips] = useState<Record<string, TtsClip>>({});
+  const [ttsProgress, setTtsProgress] = useState({ current: 0, total: 0 });
 
   const examinerAudio = useAudioClipQueue({ muted: isMuted });
 
@@ -578,22 +579,41 @@ export default function AIPracticeSpeakingTest() {
     }
 
     const voiceName = getExaminerVoice();
+    const map: Record<string, TtsClip> = {};
+    
+    setTtsProgress({ current: 0, total: items.length });
 
-    const { data, error } = await supabase.functions.invoke('generate-gemini-tts', {
-      body: {
-        items,
-        voiceName,
-      },
-    });
+    // Generate clips one by one to avoid edge function timeout
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      setTtsProgress({ current: i + 1, total: items.length });
 
-    if (error) throw error;
-    if (!data?.success || !Array.isArray(data.clips)) {
-      throw new Error(data?.error || 'Failed to generate examiner audio');
+      try {
+        const { data, error } = await supabase.functions.invoke('generate-gemini-tts', {
+          body: { item, voiceName },
+        });
+
+        if (error) {
+          console.error(`Failed to generate clip ${item.key}:`, error);
+          continue; // Skip failed clips
+        }
+
+        if (data?.success && data?.clip) {
+          map[data.clip.key] = data.clip;
+        }
+      } catch (err) {
+        console.error(`Error generating clip ${item.key}:`, err);
+        // Continue with other clips
+      }
+
+      // Small delay between requests to help with rate limiting
+      if (i < items.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
     }
 
-    const map: Record<string, TtsClip> = {};
-    for (const c of data.clips as TtsClip[]) {
-      map[c.key] = c;
+    if (Object.keys(map).length === 0) {
+      throw new Error('Failed to generate any audio clips');
     }
 
     setTtsClips(map);
@@ -947,7 +967,9 @@ export default function AIPracticeSpeakingTest() {
                     {isPreparingExaminer ? (
                       <>
                         <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
-                        <span className="text-sm text-muted-foreground">Generating examiner audio…</span>
+                        <span className="text-sm text-muted-foreground">
+                          Generating audio ({ttsProgress.current}/{ttsProgress.total})…
+                        </span>
                       </>
                     ) : isExaminerReady ? (
                       <>
