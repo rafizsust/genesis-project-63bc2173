@@ -30,6 +30,7 @@ export function useGeminiSpeaking(config: GeminiSpeakingConfig) {
   const abortControllerRef = useRef<AbortController | null>(null);
   const pendingUserInputRef = useRef<string>('');
   const silenceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const isConnectedRef = useRef(false); // Track connection state synchronously
 
   // Speech Recognition (STT)
   const recognition = useSpeechRecognition({
@@ -102,6 +103,7 @@ export function useGeminiSpeaking(config: GeminiSpeakingConfig) {
       apiKeyRef.current = data.apiKey;
       systemInstructionRef.current = data.systemInstruction;
       
+      isConnectedRef.current = true; // Update ref immediately (synchronous)
       setIsConnected(true);
       config.onConnectionChange?.(true);
       
@@ -127,6 +129,7 @@ export function useGeminiSpeaking(config: GeminiSpeakingConfig) {
     recognition.stopListening();
     synthesis.cancel();
     
+    isConnectedRef.current = false;
     setIsConnected(false);
     setConversationHistory([]);
     apiKeyRef.current = null;
@@ -251,16 +254,25 @@ export function useGeminiSpeaking(config: GeminiSpeakingConfig) {
 
   // Send text message (for programmatic control)
   const sendText = useCallback((text: string) => {
-    if (!isConnected) {
-      throw new Error('Not connected');
+    // Use ref for synchronous check (handles callback timing)
+    if (!isConnectedRef.current) {
+      console.warn('sendText called before connected, queuing...');
+      // Queue the message to be sent once connected
+      setTimeout(() => {
+        if (isConnectedRef.current) {
+          sendToGemini(text);
+        }
+      }, 100);
+      return;
     }
     sendToGemini(text);
   }, [isConnected, sendToGemini]);
 
   // Start listening
   const startListening = useCallback(() => {
-    if (!isConnected) {
-      throw new Error('Not connected');
+    if (!isConnectedRef.current) {
+      console.warn('startListening called before connected');
+      return;
     }
     recognition.startListening();
   }, [isConnected, recognition]);
