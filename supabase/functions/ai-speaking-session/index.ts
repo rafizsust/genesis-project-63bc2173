@@ -101,9 +101,9 @@ serve(async (req) => {
     const selectedVoice = validVoices.includes(voiceName) ? voiceName : 'Puck';
 
     // For Gemini Live API, we need to use a model that supports bidiGenerateContent
-    // gemini-2.0-flash-live-001 supports the Live API with audio output
+    // gemini-2.0-flash-exp is the model that supports the Live API with audio output
     const sessionConfig = {
-      model: 'models/gemini-2.0-flash-live-001',
+      model: 'models/gemini-2.0-flash-exp',
       generationConfig: {
         responseModalities: ['AUDIO'],
         speechConfig: {
