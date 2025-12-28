@@ -100,10 +100,10 @@ serve(async (req) => {
     const validVoices = ['Puck', 'Charon', 'Kore', 'Aoede', 'Fenrir', 'Leda', 'Zephyr', 'Iapetus', 'Orus'];
     const selectedVoice = validVoices.includes(voiceName) ? voiceName : 'Puck';
 
-    // For Gemini Live API, we need to get the session config
-    // The client will connect directly to the WebSocket with this config
+    // For Gemini Live API, we need to use a model that supports bidiGenerateContent
+    // gemini-2.0-flash-live-001 supports the Live API with audio output
     const sessionConfig = {
-      model: 'models/gemini-2.0-flash-exp',
+      model: 'models/gemini-2.0-flash-live-001',
       generationConfig: {
         responseModalities: ['AUDIO'],
         speechConfig: {
