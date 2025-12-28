@@ -193,9 +193,24 @@ export function useGeminiLiveAudio(config: GeminiLiveConfig) {
       };
 
       ws.onclose = (e) => {
-        console.log('WebSocket closed:', e.reason);
+        const reason = e.reason || 'Connection closed';
+        console.log('WebSocket closed:', e.code, reason);
+
         setIsConnected(false);
         config.onConnectionChange?.(false);
+
+        // Surface server close reasons (quota/billing/model access, etc.)
+        if (e.code !== 1000) {
+          const normalized = reason.toLowerCase();
+          const message =
+            normalized.includes('quota') || normalized.includes('billing')
+              ? `${reason} (This usually means your Gemini project has no quota/billing enabled for Live audio models like gemini-2.0-flash-exp.)`
+              : reason;
+
+          const err = new Error(message);
+          setError(err);
+          config.onError?.(err);
+        }
       };
 
     } catch (err) {
