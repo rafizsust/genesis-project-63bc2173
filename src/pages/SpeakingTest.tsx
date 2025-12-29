@@ -9,6 +9,7 @@ import { HighlightNoteProvider } from '@/hooks/useHighlightNotes';
 import { NoteSidebar } from '@/components/common/NoteSidebar';
 import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
+import { describeApiError } from '@/lib/apiErrors';
 import { Tables, TablesInsert } from '@/integrations/supabase/types';
 import { SpeakingTestControls } from '@/components/speaking/SpeakingTestControls';
 import { SpeakingTimer } from '@/components/speaking/SpeakingTimer';
@@ -380,48 +381,18 @@ export default function SpeakingTest() {
 
       if (evaluationError) {
         console.error('AI evaluation failed:', evaluationError);
-        // Attempt to parse the error response from the Edge Function
-        let userMessage = 'AI evaluation failed. Please try again later.';
-        let errorCode = 'UNKNOWN_ERROR';
-
-        try {
-          const errorBody = JSON.parse(evaluationError.message);
-          userMessage = errorBody.error || userMessage;
-          errorCode = errorBody.code || errorCode;
-        } catch (parseError) {
-          // If it's not a JSON error, use the raw message
-          userMessage = evaluationError.message;
-        }
-
-        // Specific user-friendly messages based on error codes
-        switch (errorCode) {
-          case 'API_KEY_NOT_FOUND':
-            userMessage = 'Your Gemini API key is not set. Please go to Settings to add it.';
-            break;
-          case 'API_KEY_INVALID_OR_SUSPENDED':
-            userMessage = 'Your Gemini API key is invalid or suspended. Please check your key in Settings.';
-            break;
-          case 'GEMINI_QUOTA_EXCEEDED':
-            userMessage = 'Your Gemini API quota has been exceeded. Please wait or check your usage limits.';
-            break;
-          case 'GEMINI_SERVICE_ERROR':
-            userMessage = 'Gemini AI service is currently unavailable. Please try again later.';
-            break;
-          case 'SUBMISSION_NOT_FOUND':
-          case 'TEST_NOT_FOUND':
-          case 'BAD_REQUEST':
-          case 'UNAUTHORIZED':
-          case 'SERVER_CONFIG_ERROR':
-            userMessage = 'An internal error occurred. Please contact support if this persists.';
-            break;
-          default:
-            // Fallback to generic message or the parsed message
-            break;
-        }
+        const errDesc = describeApiError(evaluationError);
 
         // Save to local storage if AI evaluation failed
         await saveFailedSubmissionLocally(submissionData);
-        toast.error(userMessage, { id: 'ai-eval-toast', duration: 8000 }); // Use a fixed ID for this toast
+        toast.error(errDesc.description, { 
+          id: 'ai-eval-toast', 
+          duration: 8000,
+          action: errDesc.action ? {
+            label: errDesc.action.label,
+            onClick: () => navigate(errDesc.action!.href)
+          } : undefined
+        });
         return; // Stop submission process here
       }
 

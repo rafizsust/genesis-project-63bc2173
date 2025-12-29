@@ -13,6 +13,7 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { AILoadingScreen } from '@/components/common/AILoadingScreen';
 import { useToast } from '@/hooks/use-toast';
+import { describeApiError } from '@/lib/apiErrors';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { playCompletionSound, playErrorSound } from '@/lib/sounds';
@@ -368,89 +369,16 @@ export default function AIPractice() {
       clearInterval(stepInterval);
       playErrorSound();
       
-      // Parse error message for comprehensive user-friendly display
-      // Handle both string message and structured error from edge function
-      let rawMessage = '';
-      if (typeof err === 'object' && err !== null) {
-        // Try to get message from various error structures
-        rawMessage = err.message || err.error || (err.context?.body ? JSON.stringify(err.context.body) : '') || '';
-      } else {
-        rawMessage = String(err || '');
-      }
-      
-      let errorTitle = 'Generation Failed';
-      let errorMessage = 'Something went wrong. Please try again.';
-      let solution = '';
-      let showSettingsLink = false;
-      
-      // Handle common API errors with comprehensive user-friendly messages and solutions
-      if (rawMessage.includes('quota') || rawMessage.includes('RESOURCE_EXHAUSTED') || rawMessage.includes('429') || rawMessage.includes('rate limit')) {
-        errorTitle = 'API Quota Exceeded';
-        errorMessage = 'Your Gemini API has reached its usage limit.';
-        solution = 'Wait a few minutes and try again, or upgrade your Google AI Studio plan.';
-        showSettingsLink = true;
-      } else if (rawMessage.includes('PERMISSION_DENIED') || rawMessage.includes('403') || rawMessage.includes('access denied')) {
-        errorTitle = 'Access Denied';
-        errorMessage = 'Your API key does not have the required permissions.';
-        solution = 'Check that your Gemini API key is valid and has all features enabled in Google AI Studio.';
-        showSettingsLink = true;
-      } else if (rawMessage.includes('503') || rawMessage.includes('temporarily unavailable') || rawMessage.includes('UNAVAILABLE')) {
-        errorTitle = 'Service Temporarily Unavailable';
-        errorMessage = 'The AI service is experiencing high demand.';
-        solution = 'This is usually temporary. Please wait 30 seconds and try again.';
-      } else if (rawMessage.includes('500') || rawMessage.includes('INTERNAL')) {
-        errorTitle = 'AI Service Error';
-        errorMessage = 'The AI service encountered an internal error.';
-        solution = 'This is a temporary issue. Please try again in a moment. If it persists, try a different topic.';
-      } else if (rawMessage.includes('API key') || rawMessage.includes('authentication') || rawMessage.includes('invalid')) {
-        errorTitle = 'Invalid API Key';
-        errorMessage = 'Your Gemini API key appears to be invalid or expired.';
-        solution = 'Go to Settings and update your API key with a valid key from Google AI Studio.';
-        showSettingsLink = true;
-      } else if (rawMessage.includes('Audio generation failed') || rawMessage.includes('TTS')) {
-        errorTitle = 'Audio Generation Failed';
-        // Extract the actual reason from the error message
-        const quotaMatch = rawMessage.match(/API quota exceeded[^.]*\./i);
-        const permissionMatch = rawMessage.match(/permission[^.]*\./i);
-        if (quotaMatch) {
-          errorMessage = quotaMatch[0];
-          solution = 'Wait a few minutes and try again, or upgrade your Google AI Studio plan.';
-          showSettingsLink = true;
-        } else if (rawMessage.includes('rate limit') || rawMessage.includes('quota')) {
-          errorMessage = 'Your API has reached its audio generation limit.';
-          solution = 'Wait a few minutes or upgrade your plan.';
-          showSettingsLink = true;
-        } else if (permissionMatch || rawMessage.includes('permissions')) {
-          errorMessage = 'Text-to-Speech is not enabled for your API key.';
-          solution = 'Enable Text-to-Speech in your Google AI Studio API settings.';
-          showSettingsLink = true;
-        } else {
-          errorMessage = 'Could not generate audio for the listening test.';
-          solution = 'Wait a moment and try again. If the issue persists, try reducing the audio duration.';
-        }
-      } else if (rawMessage.includes('parse') || rawMessage.includes('JSON')) {
-        errorTitle = 'Content Generation Issue';
-        errorMessage = 'The AI produced an unexpected response format.';
-        solution = 'Please try again. If this keeps happening, try a different topic or question type.';
-      } else if (rawMessage.includes('timeout') || rawMessage.includes('network')) {
-        errorTitle = 'Connection Issue';
-        errorMessage = 'Could not connect to the AI service.';
-        solution = 'Check your internet connection and try again.';
-      } else {
-        // Generic fallback with the original message (cleaned up)
-        errorMessage = rawMessage.length > 100 ? rawMessage.substring(0, 100) + '...' : rawMessage;
-        solution = 'Please try again. If the issue persists, try a different topic or contact support.';
-      }
+      const errorDesc = describeApiError(err);
       
       toast({
-        title: errorTitle,
+        title: errorDesc.title,
         description: (
           <div className="flex flex-col gap-2">
-            <span className="font-medium">{errorMessage}</span>
-            <span className="text-sm opacity-90">💡 {solution}</span>
-            {showSettingsLink && (
-              <Link to="/settings" className="text-primary-foreground underline text-sm font-medium hover:opacity-80 mt-1">
-                Go to Settings →
+            <span>{errorDesc.description}</span>
+            {errorDesc.action && (
+              <Link to={errorDesc.action.href} className="text-primary-foreground underline text-sm font-medium hover:opacity-80 mt-1">
+                {errorDesc.action.label} →
               </Link>
             )}
           </div>

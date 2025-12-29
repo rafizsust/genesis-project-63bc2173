@@ -402,7 +402,7 @@ export default function AISpeakingResults() {
           <Card className="mb-6 overflow-hidden">
             <div className="bg-gradient-to-br from-primary/10 to-accent/10 p-8">
               <div className="text-center">
-                <Badge className={cn("text-5xl md:text-6xl font-bold px-8 py-4 mb-4", getBandBg(report.overall_band))}>
+                <Badge className="text-5xl md:text-6xl font-bold px-8 py-4 mb-4 bg-primary/20 text-primary border-primary/30">
                   {report.overall_band.toFixed(1)}
                 </Badge>
                 <p className="text-lg text-muted-foreground">Overall Band Score</p>

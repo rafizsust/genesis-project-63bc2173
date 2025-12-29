@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from '@/hooks/use-toast';
+import { describeApiError } from '@/lib/apiErrors';
 import { TranscriptViewer } from '@/components/listening/TranscriptViewer';
 
 interface QuestionResult {
@@ -416,13 +417,8 @@ export default function TestResults() {
       });
 
       if (response.error) {
-        if (response.error.message?.includes('429')) {
-          throw new Error('Rate limit exceeded. Please try again in a moment.');
-        }
-        if (response.error.message?.includes('402')) {
-          throw new Error('AI credits exhausted. Please add credits to continue.');
-        }
-        throw response.error;
+        const errDesc = describeApiError(response.error);
+        throw new Error(errDesc.description);
       }
 
       const explanation = response.data?.explanation;

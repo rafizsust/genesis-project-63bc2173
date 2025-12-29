@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { loadGeneratedTest, savePracticeResult, GeneratedTest, PracticeResult } from '@/types/aiPractice';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
+import { describeApiError } from '@/lib/apiErrors';
 import { AILoadingScreen } from '@/components/common/AILoadingScreen';
 import { TestStartOverlay } from '@/components/common/TestStartOverlay';
 import { Clock, Send, PenTool } from 'lucide-react';
@@ -95,6 +96,9 @@ export default function AIPracticeWritingTest() {
       navigate(`/ai-practice/results/${test.id}`);
     } catch (err: any) {
       console.error('Evaluation error:', err);
+      const errDesc = describeApiError(err);
+      toast({ title: errDesc.title, description: errDesc.description, variant: 'destructive' });
+      
       // Save without AI evaluation
       const result: PracticeResult = {
         testId: test.id,

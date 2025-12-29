@@ -17,6 +17,7 @@ import { HighlightNoteProvider } from '@/hooks/useHighlightNotes';
 import { NoteSidebar } from '@/components/common/NoteSidebar';
 import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
+import { describeApiError } from '@/lib/apiErrors';
 import { Tables, TablesInsert } from '@/integrations/supabase/types';
 import { AILoadingScreen } from '@/components/common/AILoadingScreen';
 import { useFullscreenTest } from '@/hooks/useFullscreenTest';
@@ -259,7 +260,8 @@ export default function WritingTest() {
       evaluationResults.forEach((result, index) => {
         if (result.status === 'rejected') {
           console.error(`Evaluation for submission ${index + 1} failed:`, result.reason);
-          toast.error(`AI evaluation failed for Task ${index + 1}. Please check your Gemini API key.`);
+          const errDesc = describeApiError(result.reason);
+          toast.error(`Task ${index + 1}: ${errDesc.description}`);
         }
       });
 
