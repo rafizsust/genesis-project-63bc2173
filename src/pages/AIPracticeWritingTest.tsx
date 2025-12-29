@@ -21,6 +21,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { describeApiError } from '@/lib/apiErrors';
 import { AILoadingScreen } from '@/components/common/AILoadingScreen';
 import { WritingTestControls } from '@/components/writing/WritingTestControls';
+import { TestStartOverlay } from '@/components/common/TestStartOverlay';
 import { Clock, Send, PenTool, ChevronLeft, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -138,7 +139,7 @@ export default function AIPracticeWritingTest() {
       if (test?.topic) {
         incrementCompletion(test.topic);
       }
-      navigate(`/ai-practice/results/${test!.id}`);
+      navigate(`/ai-practice/writing/results/${test!.id}`);
     } catch (err: any) {
       console.error('Evaluation error:', err);
       const errDesc = describeApiError(err);
@@ -159,7 +160,7 @@ export default function AIPracticeWritingTest() {
       if (user) {
         await savePracticeResultAsync(result, user.id, 'writing');
       }
-      navigate(`/ai-practice/results/${test!.id}`);
+      navigate(`/ai-practice/writing/results/${test!.id}`);
     }
   };
 

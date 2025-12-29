@@ -1,10 +1,77 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { crypto } from "https://deno.land/std@0.168.0/crypto/mod.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
+
+// Decrypt user's Gemini API key
+async function decryptApiKey(encryptedValue: string, encryptionKey: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const decoder = new TextDecoder();
+  
+  const combined = Uint8Array.from(atob(encryptedValue), c => c.charCodeAt(0));
+  const iv = combined.slice(0, 12);
+  const encryptedData = combined.slice(12);
+  
+  const keyData = encoder.encode(encryptionKey);
+  const cryptoKey = await crypto.subtle.importKey(
+    "raw",
+    keyData.slice(0, 32),
+    { name: "AES-GCM" },
+    false,
+    ["decrypt"]
+  );
+  
+  const decryptedData = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv },
+    cryptoKey,
+    encryptedData
+  );
+  
+  return decoder.decode(decryptedData);
+}
+
+const GEMINI_MODELS = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
+
+async function callGemini(apiKey: string, systemPrompt: string, userPrompt: string): Promise<string | null> {
+  for (const model of GEMINI_MODELS) {
+    try {
+      console.log(`Trying Gemini model: ${model}`);
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [
+              { role: 'user', parts: [{ text: `${systemPrompt}\n\n${userPrompt}` }] }
+            ],
+            generationConfig: {
+              temperature: 0.7,
+              maxOutputTokens: 8192,
+            },
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        console.error(`Gemini ${model} failed with status ${response.status}`);
+        continue;
+      }
+
+      const data = await response.json();
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (text) return text;
+    } catch (err) {
+      console.error(`Error with ${model}:`, err);
+      continue;
+    }
+  }
+  return null;
+}
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -12,34 +79,70 @@ serve(async (req) => {
   }
 
   try {
-    const { userId, testData } = await req.json();
+    // Create Supabase client with user auth
+    const supabaseClient = createClient(
+      Deno.env.get('SUPABASE_URL') ?? '',
+      Deno.env.get('SUPABASE_ANON_KEY') ?? '',
+      { global: { headers: { Authorization: req.headers.get('Authorization')! } } }
+    );
 
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) {
-      throw new Error("LOVABLE_API_KEY is not configured");
+    // Get authenticated user
+    const { data: { user }, error: authError } = await supabaseClient.auth.getUser();
+    if (authError || !user) {
+      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+        status: 401,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
     }
 
-    // Initialize Supabase client to fetch actual test data
+    // Get user's Gemini API key
+    const { data: secretData, error: secretError } = await supabaseClient
+      .from('user_secrets')
+      .select('encrypted_value')
+      .eq('user_id', user.id)
+      .eq('secret_name', 'GEMINI_API_KEY')
+      .single();
+
+    if (secretError || !secretData) {
+      return new Response(JSON.stringify({ 
+        error: 'Gemini API key not found. Please set it in Settings.',
+        code: 'API_KEY_NOT_FOUND'
+      }), {
+        status: 403,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    const appEncryptionKey = Deno.env.get('app_encryption_key');
+    if (!appEncryptionKey) {
+      throw new Error('Encryption key not configured');
+    }
+
+    const geminiApiKey = await decryptApiKey(secretData.encrypted_value, appEncryptionKey);
+
+    const { testData } = await req.json();
+
+    // Use service role client to fetch actual test data
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
-    const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
     
     let detailedTestData = testData;
     
-    if (supabaseUrl && supabaseKey) {
-      const supabase = createClient(supabaseUrl, supabaseKey);
+    if (supabaseUrl && supabaseServiceKey) {
+      const supabase = createClient(supabaseUrl, supabaseServiceKey);
       
       // Fetch actual submission data with answers for detailed analysis
       const [readingSubmissions, listeningSubmissions] = await Promise.all([
         supabase
           .from('reading_test_submissions')
           .select('*, reading_tests(title, book_name)')
-          .eq('user_id', userId)
+          .eq('user_id', user.id)
           .order('completed_at', { ascending: false })
           .limit(5),
         supabase
           .from('listening_test_submissions')
           .select('*, listening_tests(title, book_name)')
-          .eq('user_id', userId)
+          .eq('user_id', user.id)
           .order('completed_at', { ascending: false })
           .limit(5)
       ]);
@@ -105,43 +208,14 @@ Provide:
 4. Recommend specific resources for improvement
 5. Be encouraging but honest about areas needing work`;
 
-    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt },
-        ],
-      }),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error("AI gateway error:", response.status, errorText);
-      
-      if (response.status === 429) {
-        return new Response(
-          JSON.stringify({ error: "Rate limit exceeded. Please try again later." }),
-          { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-      if (response.status === 402) {
-        return new Response(
-          JSON.stringify({ error: "AI credits exhausted. Please add credits." }),
-          { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-      
-      throw new Error(`AI gateway error: ${response.status}`);
+    const content = await callGemini(geminiApiKey, systemPrompt, userPrompt);
+    
+    if (!content) {
+      return new Response(
+        JSON.stringify({ analytics: null, error: 'Failed to generate analysis' }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     }
-
-    const data = await response.json();
-    const content = data.choices?.[0]?.message?.content || "";
     
     // Parse JSON from response
     let analytics;

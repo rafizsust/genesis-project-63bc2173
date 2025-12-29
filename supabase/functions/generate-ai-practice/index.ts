@@ -188,25 +188,22 @@ function extractJsonFromResponse(text: string): string {
   throw new Error('Could not extract valid JSON from AI response');
 }
 
-// Generate map image using Gemini (via Lovable AI Gateway)
+// Generate map image using Gemini via direct API (uses user's Gemini API key)
 async function generateMapImage(
   mapDescription: string, 
   mapLabels: Array<{id: string; text: string}>,
-  landmarks?: Array<{id: string; text: string}>
+  landmarks?: Array<{id: string; text: string}>,
+  geminiApiKey?: string
 ): Promise<string | null> {
-  const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-  if (!LOVABLE_API_KEY) {
-    console.error('LOVABLE_API_KEY not configured');
+  if (!geminiApiKey) {
+    console.error('Gemini API key not provided for map generation');
     return null;
   }
 
   try {
     console.log('Generating map image with Gemini image model...');
 
-    // Build lists for the prompt
-    // Answer positions: show ONLY the letter (e.g., "A", "B") - NO text labels
     const answerPositions = mapLabels.map(l => l.id).join(', ');
-    // Landmarks: show with text labels (e.g., "Bank", "Gift Shop")
     const landmarksList = landmarks?.map(l => `${l.text}`).join(', ') || 'streets and pathways';
     
     const imagePrompt = `Create a simple, clean map diagram for an IELTS listening test.
@@ -221,20 +218,17 @@ CRITICAL INSTRUCTIONS:
 - Make it look professional with clear pathways, streets, and building outlines
 - The reference landmarks should have their names visible on the map`;
 
-    const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'google/gemini-2.5-flash-image-preview',
-        messages: [
-          { role: 'user', content: imagePrompt }
-        ],
-        modalities: ['image', 'text'],
-      }),
-    });
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp-image-generation:generateContent?key=${geminiApiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: imagePrompt }] }],
+          generationConfig: { responseModalities: ['TEXT', 'IMAGE'] },
+        }),
+      }
+    );
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -243,11 +237,11 @@ CRITICAL INSTRUCTIONS:
     }
 
     const data = await response.json();
-    const imageData = data.choices?.[0]?.message?.images?.[0]?.image_url?.url;
+    const imagePart = data.candidates?.[0]?.content?.parts?.find((p: any) => p.inlineData);
     
-    if (imageData && imageData.startsWith('data:image/')) {
+    if (imagePart?.inlineData?.data) {
       console.log('Map image generated successfully');
-      return imageData;
+      return `data:image/${imagePart.inlineData.mimeType?.split('/')[1] || 'png'};base64,${imagePart.inlineData.data}`;
     }
     
     console.error('No image data in response');

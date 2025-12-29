@@ -1,9 +1,77 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { crypto } from "https://deno.land/std@0.168.0/crypto/mod.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
+
+// Decrypt user's Gemini API key
+async function decryptApiKey(encryptedValue: string, encryptionKey: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const decoder = new TextDecoder();
+  
+  const combined = Uint8Array.from(atob(encryptedValue), c => c.charCodeAt(0));
+  const iv = combined.slice(0, 12);
+  const encryptedData = combined.slice(12);
+  
+  const keyData = encoder.encode(encryptionKey);
+  const cryptoKey = await crypto.subtle.importKey(
+    "raw",
+    keyData.slice(0, 32),
+    { name: "AES-GCM" },
+    false,
+    ["decrypt"]
+  );
+  
+  const decryptedData = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv },
+    cryptoKey,
+    encryptedData
+  );
+  
+  return decoder.decode(decryptedData);
+}
+
+const GEMINI_MODELS = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
+
+async function callGemini(apiKey: string, systemPrompt: string, userPrompt: string): Promise<string | null> {
+  for (const model of GEMINI_MODELS) {
+    try {
+      console.log(`Trying Gemini model: ${model}`);
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [
+              { role: 'user', parts: [{ text: `${systemPrompt}\n\n${userPrompt}` }] }
+            ],
+            generationConfig: {
+              temperature: 0.7,
+              maxOutputTokens: 2048,
+            },
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        console.error(`Gemini ${model} failed with status ${response.status}`);
+        continue;
+      }
+
+      const data = await response.json();
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (text) return text;
+    } catch (err) {
+      console.error(`Error with ${model}:`, err);
+      continue;
+    }
+  }
+  return null;
+}
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -11,6 +79,47 @@ serve(async (req) => {
   }
 
   try {
+    // Create Supabase client with user auth
+    const supabaseClient = createClient(
+      Deno.env.get('SUPABASE_URL') ?? '',
+      Deno.env.get('SUPABASE_ANON_KEY') ?? '',
+      { global: { headers: { Authorization: req.headers.get('Authorization')! } } }
+    );
+
+    // Get authenticated user
+    const { data: { user }, error: authError } = await supabaseClient.auth.getUser();
+    if (authError || !user) {
+      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+        status: 401,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Get user's Gemini API key
+    const { data: secretData, error: secretError } = await supabaseClient
+      .from('user_secrets')
+      .select('encrypted_value')
+      .eq('user_id', user.id)
+      .eq('secret_name', 'GEMINI_API_KEY')
+      .single();
+
+    if (secretError || !secretData) {
+      return new Response(JSON.stringify({ 
+        error: 'Gemini API key not found. Please set it in Settings.',
+        code: 'API_KEY_NOT_FOUND'
+      }), {
+        status: 403,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    const appEncryptionKey = Deno.env.get('app_encryption_key');
+    if (!appEncryptionKey) {
+      throw new Error('Encryption key not configured');
+    }
+
+    const geminiApiKey = await decryptApiKey(secretData.encrypted_value, appEncryptionKey);
+
     const { 
       questionText, 
       userAnswer, 
@@ -23,11 +132,6 @@ serve(async (req) => {
       testType
     } = await req.json();
 
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) {
-      throw new Error("LOVABLE_API_KEY is not configured");
-    }
-
     // Build options context if available
     let optionsText = '';
     if (options && Array.isArray(options) && options.length > 0) {
@@ -35,7 +139,6 @@ serve(async (req) => {
         `${String.fromCharCode(65 + i)}. ${opt}`
       ).join('\n')}`;
     } else if (options && typeof options === 'object') {
-      // Handle object format {A: "option1", B: "option2"}
       const optEntries = Object.entries(options);
       if (optEntries.length > 0) {
         optionsText = `\n\nAvailable Options:\n${optEntries.map(([key, val]) => 
@@ -108,7 +211,7 @@ Correct Answer: ${correctAnswer}
 
 Please explain ${isCorrect ? 'why this answer is correct and what concept it demonstrates' : 'why the student\'s answer is wrong and why the correct answer is right'}. ${contextReference} Also, if you notice any issues with the provided correct answer, please mention that the user should report this issue to the admin.`;
 
-    console.log("Generating explanation with context:", {
+    console.log("Generating explanation with Gemini:", {
       questionType,
       testType,
       hasOptions: !!optionsText,
@@ -117,43 +220,11 @@ Please explain ${isCorrect ? 'why this answer is correct and what concept it dem
       isCorrect
     });
 
-    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt },
-        ],
-      }),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error("AI gateway error:", response.status, errorText);
-      
-      if (response.status === 429) {
-        return new Response(
-          JSON.stringify({ error: "Rate limit exceeded. Please try again later." }),
-          { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-      if (response.status === 402) {
-        return new Response(
-          JSON.stringify({ error: "AI credits exhausted. Please add credits to continue." }),
-          { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-      
-      throw new Error(`AI gateway error: ${response.status}`);
+    const explanation = await callGemini(geminiApiKey, systemPrompt, userPrompt);
+    
+    if (!explanation) {
+      throw new Error('Failed to generate explanation');
     }
-
-    const data = await response.json();
-    const explanation = data.choices?.[0]?.message?.content || "Unable to generate explanation.";
 
     return new Response(
       JSON.stringify({ explanation }),
