@@ -28,6 +28,7 @@ import {
   GraduationCap
 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
+import { describeApiError } from '@/lib/apiErrors';
 import { AILoadingScreen } from '@/components/common/AILoadingScreen';
 import { Navbar } from '@/components/Navbar';
 import { Footer } from '@/components/Footer';
@@ -292,13 +293,15 @@ export default function Analytics() {
       });
     } catch (error) {
       console.error('Error generating analytics:', error);
+      const errDesc = describeApiError(error);
       const defaultAnalytics = generateDefaultAnalytics();
       localStorage.setItem(`analytics_${user?.id}`, JSON.stringify(defaultAnalytics));
       setAnalytics(defaultAnalytics);
       
       toast({
-        title: 'Analytics Ready',
-        description: 'Generated based on available data.',
+        title: errDesc.title,
+        description: errDesc.description,
+        variant: 'destructive',
       });
     } finally {
       setGenerating(false);

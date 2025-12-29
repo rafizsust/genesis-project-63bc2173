@@ -9,6 +9,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useSpeechSynthesis } from '@/hooks/useSpeechSynthesis';
 import { TestStartOverlay } from '@/components/common/TestStartOverlay';
 import { AILoadingScreen } from '@/components/common/AILoadingScreen';
+import { describeApiError } from '@/lib/apiErrors';
 import { supabase } from '@/integrations/supabase/client';
 import {
   Clock,
@@ -483,14 +484,11 @@ export default function AIPracticeSpeakingTest() {
     } catch (err: any) {
       console.error('[AIPracticeSpeakingTest] Submission error:', err);
       
-      const errorMessage = err?.message || 'Could not submit test for evaluation.';
-      const isTimeout = errorMessage.toLowerCase().includes('timeout') || errorMessage.toLowerCase().includes('abort');
+      const errDesc = describeApiError(err);
       
       toast({
-        title: 'Submission Failed',
-        description: isTimeout 
-          ? 'The evaluation is taking too long. Please try again with a shorter recording.'
-          : errorMessage,
+        title: errDesc.title,
+        description: errDesc.description,
         variant: 'destructive',
       });
       setPhase('done');
