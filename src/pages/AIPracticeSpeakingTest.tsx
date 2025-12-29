@@ -915,35 +915,36 @@ export default function AIPracticeSpeakingTest() {
     <div className="min-h-screen bg-background flex flex-col">
       {/* Header */}
       <header className="border-b bg-card">
-        <div className="container mx-auto px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-3">
+        <div className="container mx-auto px-2 md:px-4 py-2 md:py-3 flex items-center justify-between">
+          <div className="flex items-center gap-1 md:gap-3">
             <Button 
               variant="ghost" 
               size="icon" 
               onClick={() => navigate('/ai-practice')}
               title="Exit Test"
+              className="h-8 w-8 md:h-10 md:w-10"
             >
-              <ArrowLeft className="w-5 h-5" />
+              <ArrowLeft className="w-4 h-4 md:w-5 md:h-5" />
             </Button>
-            <Badge variant="outline" className="font-mono">
+            <Badge variant="outline" className="font-mono text-xs md:text-sm">
               Part {currentPart}
             </Badge>
-            <span className="text-sm text-muted-foreground">
+            <span className="text-xs md:text-sm text-muted-foreground hidden sm:inline truncate max-w-[120px] md:max-w-none">
               {test?.topic}
             </span>
           </div>
           
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 md:gap-2">
             {/* Timer */}
             {timeLeft > 0 && (
               <div className={cn(
-                "flex items-center gap-2 px-3 py-1 rounded-full font-mono text-lg",
+                "flex items-center gap-1 md:gap-2 px-2 md:px-3 py-1 rounded-full font-mono text-sm md:text-lg",
                 isPaused ? "bg-warning/20 text-warning" :
                 timeLeft <= 10 ? "bg-destructive/20 text-destructive animate-pulse" : "bg-muted"
               )}>
-                <Clock className="w-4 h-4" />
+                <Clock className="w-3 h-3 md:w-4 md:h-4" />
                 {formatTime(timeLeft)}
-                {isPaused && <span className="text-xs ml-1">(Paused)</span>}
+                {isPaused && <span className="text-xs ml-1 hidden sm:inline">(Paused)</span>}
               </div>
             )}
             
@@ -953,17 +954,17 @@ export default function AIPracticeSpeakingTest() {
                 variant={isPaused ? "default" : "outline"}
                 size="sm"
                 onClick={togglePause}
-                className="gap-2"
+                className="gap-1 md:gap-2 h-8 px-2 md:px-3"
               >
                 {isPaused ? (
                   <>
-                    <Play className="w-4 h-4" />
-                    Resume
+                    <Play className="w-3 h-3 md:w-4 md:h-4" />
+                    <span className="hidden sm:inline">Resume</span>
                   </>
                 ) : (
                   <>
-                    <Pause className="w-4 h-4" />
-                    Pause
+                    <Pause className="w-3 h-3 md:w-4 md:h-4" />
+                    <span className="hidden sm:inline">Pause</span>
                   </>
                 )}
               </Button>
@@ -973,26 +974,27 @@ export default function AIPracticeSpeakingTest() {
             <Button
               variant="ghost"
               size="icon"
+              className="h-8 w-8 md:h-10 md:w-10"
               onClick={() => {
                 setIsMuted(!isMuted);
                 if (!isMuted) tts.cancel();
               }}
             >
-              {isMuted ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
+              {isMuted ? <VolumeX className="w-4 h-4 md:w-5 md:h-5" /> : <Volume2 className="w-4 h-4 md:w-5 md:h-5" />}
             </Button>
           </div>
         </div>
       </header>
 
       {/* Main content */}
-      <main className="flex-1 container mx-auto px-4 py-8 max-w-3xl">
+      <main className="flex-1 container mx-auto px-3 md:px-4 py-4 md:py-8 max-w-3xl pb-24">
         {/* Current speaking text display */}
         {currentSpeakingText && (
-          <Card className="mb-6 border-primary/50 bg-primary/5">
-            <CardContent className="p-4">
-              <div className="flex items-start gap-3">
-                <Volume2 className="w-5 h-5 text-primary mt-1 animate-pulse" />
-                <p className="text-lg">{currentSpeakingText}</p>
+          <Card className="mb-4 md:mb-6 border-primary/50 bg-primary/5">
+            <CardContent className="p-3 md:p-4">
+              <div className="flex items-start gap-2 md:gap-3">
+                <Volume2 className="w-4 h-4 md:w-5 md:h-5 text-primary mt-1 animate-pulse flex-shrink-0" />
+                <p className="text-base md:text-lg">{currentSpeakingText}</p>
               </div>
             </CardContent>
           </Card>
@@ -1000,10 +1002,10 @@ export default function AIPracticeSpeakingTest() {
 
         {/* Part 2 Cue Card */}
         {currentPart === 2 && (phase === 'part2_prep' || phase === 'part2_recording') && speakingParts.part2 && (
-          <Card className="mb-6">
-            <CardContent className="p-6">
-              <h3 className="font-bold text-xl mb-4">{speakingParts.part2.cue_card_topic}</h3>
-              <div className="whitespace-pre-line text-muted-foreground">
+          <Card className="mb-4 md:mb-6">
+            <CardContent className="p-4 md:p-6">
+              <h3 className="font-bold text-lg md:text-xl mb-3 md:mb-4">{speakingParts.part2.cue_card_topic}</h3>
+              <div className="whitespace-pre-line text-sm md:text-base text-muted-foreground">
                 {speakingParts.part2.cue_card_content}
               </div>
             </CardContent>
@@ -1012,48 +1014,49 @@ export default function AIPracticeSpeakingTest() {
 
         {/* Current Question Display */}
         {(phase.includes('question') || phase.includes('recording')) && getCurrentQuestion() && (
-          <Card className="mb-6">
-            <CardContent className="p-6">
-              <div className="flex items-center gap-2 mb-3">
-                <Badge>Question {getCurrentQuestion()?.question_number}</Badge>
+          <Card className="mb-4 md:mb-6">
+            <CardContent className="p-4 md:p-6">
+              <div className="flex items-center gap-2 mb-2 md:mb-3">
+                <Badge className="text-xs md:text-sm">Question {getCurrentQuestion()?.question_number}</Badge>
               </div>
-              <p className="text-lg">{getCurrentQuestion()?.question_text}</p>
+              <p className="text-base md:text-lg">{getCurrentQuestion()?.question_text}</p>
             </CardContent>
           </Card>
         )}
 
         {/* Recording indicator with Stop & Next and Restart buttons */}
         {isRecording && (
-          <div className="flex flex-col items-center gap-4 py-8">
+          <div className="flex flex-col items-center gap-3 md:gap-4 py-6 md:py-8">
             <div className="relative">
-              <div className="w-20 h-20 rounded-full bg-destructive/20 flex items-center justify-center">
-                <Mic className="w-10 h-10 text-destructive animate-pulse" />
+              <div className="w-16 h-16 md:w-20 md:h-20 rounded-full bg-destructive/20 flex items-center justify-center">
+                <Mic className="w-8 h-8 md:w-10 md:h-10 text-destructive animate-pulse" />
               </div>
               <div className="absolute inset-0 rounded-full border-4 border-destructive animate-ping opacity-30" />
             </div>
-            <p className="text-muted-foreground">Recording your response...</p>
-            <p className="text-sm text-muted-foreground">Time remaining: {formatTime(timeLeft)}</p>
+            <p className="text-sm md:text-base text-muted-foreground">Recording your response...</p>
+            <p className="text-xs md:text-sm text-muted-foreground">Time remaining: {formatTime(timeLeft)}</p>
             
             {/* Action buttons - Restart and Stop */}
-            <div className="flex items-center gap-3 mt-4">
+            <div className="flex flex-col sm:flex-row items-center gap-2 md:gap-3 mt-2 md:mt-4 w-full sm:w-auto px-4 sm:px-0">
               {/* Restart Recording button */}
               <Button 
                 onClick={restartRecording} 
                 variant="outline" 
-                size="lg"
-                className="gap-2 border-destructive/50 text-destructive hover:bg-destructive/10"
+                size="default"
+                className="gap-2 border-destructive/50 text-destructive hover:bg-destructive/10 w-full sm:w-auto"
               >
                 <RotateCcw className="w-4 h-4" />
-                Restart Recording
+                Restart
               </Button>
               
               {/* Stop & Move to Next button */}
               <Button 
                 onClick={handleStopAndNext} 
                 variant="default" 
-                size="lg"
+                size="default"
+                className="w-full sm:w-auto"
               >
-                Stop & Move to Next
+                Stop & Next
               </Button>
             </div>
           </div>
@@ -1088,7 +1091,7 @@ export default function AIPracticeSpeakingTest() {
         )}
 
         {/* Progress indicator */}
-        <div className="fixed bottom-0 left-0 right-0 bg-card border-t p-4">
+        <div className="fixed bottom-0 left-0 right-0 bg-card border-t p-2 md:p-4">
           <div className="container mx-auto max-w-3xl">
             {(() => {
               const available = [
@@ -1103,11 +1106,11 @@ export default function AIPracticeSpeakingTest() {
 
               return (
                 <>
-                  <div className="flex items-center justify-between text-sm text-muted-foreground mb-2">
+                  <div className="flex items-center justify-between text-xs md:text-sm text-muted-foreground mb-1 md:mb-2">
                     <span>Test Progress</span>
                     <span>Part {idx + 1} of {total}</span>
                   </div>
-                  <Progress value={pct} className="h-2" />
+                  <Progress value={pct} className="h-1.5 md:h-2" />
                 </>
               );
             })()}

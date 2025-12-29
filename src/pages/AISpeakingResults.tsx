@@ -382,40 +382,40 @@ export default function AISpeakingResults() {
     <div className="min-h-screen flex flex-col bg-background">
       <Navbar />
       
-      <main className="flex-1 py-8">
-        <div className="container max-w-5xl mx-auto px-4">
+      <main className="flex-1 py-4 md:py-8">
+        <div className="container max-w-5xl mx-auto px-3 md:px-4">
           {/* Header */}
-          <div className="text-center mb-8">
-            <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary/10 text-primary mb-4">
-              <Sparkles className="w-4 h-4" />
-              <span className="text-sm font-medium">AI Speaking Evaluation</span>
+          <div className="text-center mb-6 md:mb-8">
+            <div className="inline-flex items-center gap-2 px-3 md:px-4 py-1.5 md:py-2 rounded-full bg-primary/10 text-primary mb-3 md:mb-4">
+              <Sparkles className="w-3 h-3 md:w-4 md:h-4" />
+              <span className="text-xs md:text-sm font-medium">AI Speaking Evaluation</span>
             </div>
-            <h1 className="text-2xl md:text-3xl font-bold mb-2">
+            <h1 className="text-xl md:text-2xl lg:text-3xl font-bold mb-2">
               Speaking Test Results
             </h1>
-            <p className="text-muted-foreground">
+            <p className="text-sm md:text-base text-muted-foreground">
               Comprehensive analysis based on official IELTS 2025 criteria
             </p>
           </div>
 
           {/* Overall Band Score */}
-          <Card className="mb-6 overflow-hidden">
-            <div className="bg-gradient-to-br from-primary/10 to-accent/10 p-8">
+          <Card className="mb-4 md:mb-6 overflow-hidden">
+            <div className="bg-gradient-to-br from-primary/10 to-accent/10 p-4 md:p-8">
               <div className="text-center">
-                <Badge className="text-5xl md:text-6xl font-bold px-8 py-4 mb-4 bg-primary/20 text-primary border-primary/30">
+                <Badge className="text-3xl md:text-5xl lg:text-6xl font-bold px-4 md:px-8 py-2 md:py-4 mb-3 md:mb-4 bg-primary/20 text-primary border-primary/30">
                   {report.overall_band.toFixed(1)}
                 </Badge>
-                <p className="text-lg text-muted-foreground">Overall Band Score</p>
+                <p className="text-base md:text-lg text-muted-foreground">Overall Band Score</p>
               </div>
               
               {/* Criteria Overview */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-8">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-4 mt-6 md:mt-8">
                 {criteria.map(({ label, data }) => (
-                  <div key={label} className="text-center">
-                    <div className={cn("text-2xl font-bold mb-1", getBandColor(data?.score || 0))}>
+                  <div key={label} className="text-center p-2 md:p-0">
+                    <div className={cn("text-lg md:text-2xl font-bold mb-1", getBandColor(data?.score || 0))}>
                       {data?.score?.toFixed(1) || 'N/A'}
                     </div>
-                    <p className="text-xs text-muted-foreground">{label}</p>
+                    <p className="text-[10px] md:text-xs text-muted-foreground leading-tight">{label}</p>
                   </div>
                 ))}
               </div>
@@ -423,42 +423,42 @@ export default function AISpeakingResults() {
           </Card>
 
           <Tabs defaultValue="criteria" className="mb-6">
-            <TabsList className="grid w-full grid-cols-6">
-              <TabsTrigger value="criteria">Criteria</TabsTrigger>
-              <TabsTrigger value="transcript">Transcript</TabsTrigger>
-              <TabsTrigger value="model">Model Answers</TabsTrigger>
-              <TabsTrigger value="lexical">Lexical</TabsTrigger>
-              <TabsTrigger value="parts">Parts</TabsTrigger>
-              <TabsTrigger value="improve">Improve</TabsTrigger>
+            <TabsList className="w-full overflow-x-auto flex md:grid md:grid-cols-6 h-auto p-1">
+              <TabsTrigger value="criteria" className="text-xs md:text-sm px-2 md:px-3 py-1.5 whitespace-nowrap">Criteria</TabsTrigger>
+              <TabsTrigger value="transcript" className="text-xs md:text-sm px-2 md:px-3 py-1.5 whitespace-nowrap">Transcript</TabsTrigger>
+              <TabsTrigger value="model" className="text-xs md:text-sm px-2 md:px-3 py-1.5 whitespace-nowrap">Model</TabsTrigger>
+              <TabsTrigger value="lexical" className="text-xs md:text-sm px-2 md:px-3 py-1.5 whitespace-nowrap">Lexical</TabsTrigger>
+              <TabsTrigger value="parts" className="text-xs md:text-sm px-2 md:px-3 py-1.5 whitespace-nowrap">Parts</TabsTrigger>
+              <TabsTrigger value="improve" className="text-xs md:text-sm px-2 md:px-3 py-1.5 whitespace-nowrap">Improve</TabsTrigger>
             </TabsList>
 
             {/* Criteria Breakdown */}
-            <TabsContent value="criteria" className="mt-6 space-y-4">
+            <TabsContent value="criteria" className="mt-4 md:mt-6 space-y-3 md:space-y-4">
               {criteria.map(({ key, label, data }) => (
                 <Card key={key}>
-                  <CardHeader className="pb-3">
-                    <div className="flex items-center justify-between">
-                      <CardTitle className="text-lg">{label}</CardTitle>
-                      <Badge className={cn("text-lg font-bold px-3", getBandBg(data?.score || 0))}>
+                  <CardHeader className="pb-2 md:pb-3 p-3 md:p-6">
+                    <div className="flex items-center justify-between gap-2">
+                      <CardTitle className="text-sm md:text-lg">{label}</CardTitle>
+                      <Badge className={cn("text-sm md:text-lg font-bold px-2 md:px-3", getBandBg(data?.score || 0))}>
                         {data?.score?.toFixed(1) || 'N/A'}
                       </Badge>
                     </div>
                     <Progress 
                       value={(data?.score || 0) / 9 * 100} 
-                      className="h-2 mt-2"
+                      className="h-1.5 md:h-2 mt-2"
                     />
                   </CardHeader>
-                  <CardContent className="space-y-4">
+                  <CardContent className="space-y-3 md:space-y-4 p-3 md:p-6 pt-0 md:pt-0">
                     {/* Strengths */}
                     {data?.strengths && data.strengths.length > 0 && (
                       <div>
-                        <div className="flex items-center gap-2 text-success mb-2">
-                          <CheckCircle2 className="w-4 h-4" />
-                          <span className="font-medium text-sm">Strengths</span>
+                        <div className="flex items-center gap-2 text-success mb-1.5 md:mb-2">
+                          <CheckCircle2 className="w-3 h-3 md:w-4 md:h-4" />
+                          <span className="font-medium text-xs md:text-sm">Strengths</span>
                         </div>
-                        <ul className="space-y-1 pl-6">
+                        <ul className="space-y-1 pl-4 md:pl-6">
                           {data.strengths.map((s, i) => (
-                            <li key={i} className="text-sm text-muted-foreground list-disc">{s}</li>
+                            <li key={i} className="text-xs md:text-sm text-muted-foreground list-disc">{s}</li>
                           ))}
                         </ul>
                       </div>
@@ -467,13 +467,13 @@ export default function AISpeakingResults() {
                     {/* Weaknesses */}
                     {data?.weaknesses && data.weaknesses.length > 0 && (
                       <div>
-                        <div className="flex items-center gap-2 text-destructive mb-2">
-                          <AlertCircle className="w-4 h-4" />
-                          <span className="font-medium text-sm">Areas to Improve</span>
+                        <div className="flex items-center gap-2 text-destructive mb-1.5 md:mb-2">
+                          <AlertCircle className="w-3 h-3 md:w-4 md:h-4" />
+                          <span className="font-medium text-xs md:text-sm">Areas to Improve</span>
                         </div>
-                        <ul className="space-y-1 pl-6">
+                        <ul className="space-y-1 pl-4 md:pl-6">
                           {data.weaknesses.map((w, i) => (
-                            <li key={i} className="text-sm text-muted-foreground list-disc">{w}</li>
+                            <li key={i} className="text-xs md:text-sm text-muted-foreground list-disc">{w}</li>
                           ))}
                         </ul>
                       </div>
@@ -482,13 +482,13 @@ export default function AISpeakingResults() {
                     {/* Suggestions */}
                     {data?.suggestions && data.suggestions.length > 0 && (
                       <div>
-                        <div className="flex items-center gap-2 text-primary mb-2">
-                          <Lightbulb className="w-4 h-4" />
-                          <span className="font-medium text-sm">Suggestions</span>
+                        <div className="flex items-center gap-2 text-primary mb-1.5 md:mb-2">
+                          <Lightbulb className="w-3 h-3 md:w-4 md:h-4" />
+                          <span className="font-medium text-xs md:text-sm">Suggestions</span>
                         </div>
-                        <ul className="space-y-1 pl-6">
+                        <ul className="space-y-1 pl-4 md:pl-6">
                           {data.suggestions.map((s, i) => (
-                            <li key={i} className="text-sm text-muted-foreground list-disc">{s}</li>
+                            <li key={i} className="text-xs md:text-sm text-muted-foreground list-disc">{s}</li>
                           ))}
                         </ul>
                       </div>
@@ -499,47 +499,47 @@ export default function AISpeakingResults() {
             </TabsContent>
 
             {/* Model Answers */}
-            <TabsContent value="model" className="mt-6">
+            <TabsContent value="model" className="mt-4 md:mt-6">
               <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Sparkles className="w-5 h-5 text-primary" />
+                <CardHeader className="p-3 md:p-6">
+                  <CardTitle className="flex items-center gap-2 text-base md:text-lg">
+                    <Sparkles className="w-4 h-4 md:w-5 md:h-5 text-primary" />
                     Band 8+ Model Answers
                   </CardTitle>
-                  <CardDescription>
+                  <CardDescription className="text-xs md:text-sm">
                     Learn from example responses that demonstrate high-scoring techniques
                   </CardDescription>
                 </CardHeader>
-                <CardContent className="space-y-6">
+                <CardContent className="space-y-4 md:space-y-6 p-3 md:p-6 pt-0 md:pt-0">
                   {report.modelAnswers && report.modelAnswers.length > 0 ? (
                     report.modelAnswers.map((model, i) => (
-                      <div key={i} className="border rounded-lg p-4 space-y-4">
-                        <div className="flex items-center gap-2">
-                          <Badge variant="outline">Part {model.partNumber}</Badge>
-                          <span className="text-sm font-medium">{model.question}</span>
+                      <div key={i} className="border rounded-lg p-3 md:p-4 space-y-3 md:space-y-4">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Badge variant="outline" className="text-xs">Part {model.partNumber}</Badge>
+                          <span className="text-xs md:text-sm font-medium">{model.question}</span>
                         </div>
 
                         {model.candidateResponse && (
-                          <div className="pl-4 border-l-2 border-muted">
-                            <p className="text-xs text-muted-foreground mb-1">Your response:</p>
-                            <p className="text-sm italic text-muted-foreground">{model.candidateResponse}</p>
+                          <div className="pl-3 md:pl-4 border-l-2 border-muted">
+                            <p className="text-[10px] md:text-xs text-muted-foreground mb-1">Your response:</p>
+                            <p className="text-xs md:text-sm italic text-muted-foreground">{model.candidateResponse}</p>
                           </div>
                         )}
 
-                        <div className="pl-4 border-l-2 border-success">
-                          <p className="text-xs text-success mb-1 font-medium">Band 8+ Model Answer:</p>
-                          <p className="text-sm">{model.modelAnswer}</p>
+                        <div className="pl-3 md:pl-4 border-l-2 border-success">
+                          <p className="text-[10px] md:text-xs text-success mb-1 font-medium">Band 8+ Model Answer:</p>
+                          <p className="text-xs md:text-sm">{model.modelAnswer}</p>
                         </div>
 
                         {model.keyFeatures && model.keyFeatures.length > 0 && (
-                          <div className="bg-primary/5 rounded-lg p-3">
-                            <p className="text-xs font-medium text-primary mb-2 flex items-center gap-1">
+                          <div className="bg-primary/5 rounded-lg p-2 md:p-3">
+                            <p className="text-[10px] md:text-xs font-medium text-primary mb-1.5 md:mb-2 flex items-center gap-1">
                               <Lightbulb className="w-3 h-3" />
                               Why this works:
                             </p>
                             <ul className="space-y-1">
                               {model.keyFeatures.map((feature, j) => (
-                                <li key={j} className="text-xs text-muted-foreground flex items-start gap-2">
+                                <li key={j} className="text-[10px] md:text-xs text-muted-foreground flex items-start gap-2">
                                   <CheckCircle2 className="w-3 h-3 text-success flex-shrink-0 mt-0.5" />
                                   {feature}
                                 </li>
@@ -550,7 +550,7 @@ export default function AISpeakingResults() {
                       </div>
                     ))
                   ) : (
-                    <p className="text-muted-foreground text-center py-8">
+                    <p className="text-muted-foreground text-center py-6 md:py-8 text-sm">
                       Model answers will appear here after your test is fully evaluated.
                     </p>
                   )}
@@ -801,8 +801,8 @@ export default function AISpeakingResults() {
           </Tabs>
 
           {/* Action Buttons */}
-          <div className="flex flex-col sm:flex-row gap-4 justify-center mt-8">
-            <Button variant="outline" asChild>
+          <div className="flex flex-col sm:flex-row gap-3 md:gap-4 justify-center mt-6 md:mt-8 px-2 md:px-0">
+            <Button variant="outline" asChild className="w-full sm:w-auto">
               <Link to="/ai-practice">
                 <Home className="w-4 h-4 mr-2" />
                 Back to AI Practice
@@ -811,6 +811,7 @@ export default function AISpeakingResults() {
             {report.modelAnswers && report.modelAnswers.length > 0 && (
               <Button 
                 variant="secondary"
+                className="w-full sm:w-auto"
                 onClick={() => {
                   // Store practice data for re-attempt
                   const practiceData = {
@@ -826,7 +827,7 @@ export default function AISpeakingResults() {
                 Practice These Questions
               </Button>
             )}
-            <Button asChild>
+            <Button asChild className="w-full sm:w-auto">
               <Link to="/ai-practice">
                 <RotateCcw className="w-4 h-4 mr-2" />
                 New Test
