@@ -349,7 +349,7 @@ export default function AIPracticeSpeakingTest() {
 
       const fluencyFlag = part2Duration > 0 && part2Duration < PART2_MIN_SPEAKING;
 
-      const { error } = await supabase.functions.invoke('evaluate-ai-speaking', {
+      const { data, error } = await supabase.functions.invoke('evaluate-ai-speaking', {
         body: {
           testId,
           audioData,
@@ -362,6 +362,7 @@ export default function AIPracticeSpeakingTest() {
       });
 
       if (error) throw error;
+      if (data?.error) throw new Error(data.error);
 
       setPhase('done');
       navigate(`/ai-practice/speaking/results/${testId}`);
@@ -392,7 +393,30 @@ export default function AIPracticeSpeakingTest() {
 
   const transitionToPart3 = () => {
     setPhase('part2_transition');
-    speakText("Thank you. That is the end of Part 2. Now we will move on to Part 3.");
+
+    if (speakingPartsRef.current.part3) {
+      speakText("Thank you. That is the end of Part 2. Now we will move on to Part 3.");
+    } else {
+      endTest();
+    }
+  };
+
+  const transitionAfterPart1 = () => {
+    const parts = speakingPartsRef.current;
+
+    if (parts.part2) {
+      setPhase('part1_transition');
+      speakText("Thank you. That is the end of Part 1. Now we will move on to Part 2.");
+      return;
+    }
+
+    if (parts.part3) {
+      setPhase('part1_transition');
+      speakText("Thank you. That is the end of Part 1. Now we will move on to Part 3.");
+      return;
+    }
+
+    endTest();
   };
 
   const startPart2 = () => {
@@ -408,11 +432,6 @@ export default function AIPracticeSpeakingTest() {
     } else {
       endTest();
     }
-  };
-
-  const transitionToPart2 = () => {
-    setPhase('part1_transition');
-    speakText("Thank you. That is the end of Part 1. Now we will move on to Part 2.");
   };
 
   const startPart2Speaking = () => {
@@ -452,7 +471,7 @@ export default function AIPracticeSpeakingTest() {
         setPhase('part1_question');
         speakText(part1.questions[nextIdx].question_text);
       } else {
-        transitionToPart2();
+        transitionAfterPart1();
       }
     } else if (currentPhase === 'part2_recording') {
       stopRecording();
@@ -495,8 +514,14 @@ export default function AIPracticeSpeakingTest() {
       setTimeLeft(TIMING.PART1_QUESTION);
       startRecording();
     } else if (currentPhase === 'part1_transition') {
-      // Start Part 2
-      startPart2();
+      // Start the next part after Part 1 (based on which parts exist)
+      if (parts.part2) {
+        startPart2();
+      } else if (parts.part3) {
+        startPart3();
+      } else {
+        endTest();
+      }
     } else if (currentPhase === 'part2_intro') {
       // Show cue card and start prep timer
       setPhase('part2_prep');
@@ -509,8 +534,12 @@ export default function AIPracticeSpeakingTest() {
       // Set timeLeft AFTER starting recording to ensure timer effect triggers
       setTimeout(() => setTimeLeft(TIMING.PART2_SPEAK), 0);
     } else if (currentPhase === 'part2_transition') {
-      // Start Part 3
-      startPart3();
+      // Start Part 3 if it exists, otherwise end.
+      if (parts.part3) {
+        startPart3();
+      } else {
+        endTest();
+      }
     } else if (currentPhase === 'part3_intro') {
       // Start first Part 3 question
       const part3 = parts.part3;
@@ -544,8 +573,7 @@ export default function AIPracticeSpeakingTest() {
         setPhase('part1_question');
         speakText(part1.questions[nextIdx].question_text);
       } else {
-        // Transition to Part 2
-        transitionToPart2();
+        transitionAfterPart1();
       }
     } else if (currentPhase === 'part2_prep') {
       // Start Part 2 recording
@@ -807,11 +835,27 @@ export default function AIPracticeSpeakingTest() {
         {/* Progress indicator */}
         <div className="fixed bottom-0 left-0 right-0 bg-card border-t p-4">
           <div className="container mx-auto max-w-3xl">
-            <div className="flex items-center justify-between text-sm text-muted-foreground mb-2">
-              <span>Test Progress</span>
-              <span>Part {currentPart} of 3</span>
-            </div>
-            <Progress value={(currentPart / 3) * 100} className="h-2" />
+            {(() => {
+              const available = [
+                speakingParts.part1 ? 1 : null,
+                speakingParts.part2 ? 2 : null,
+                speakingParts.part3 ? 3 : null,
+              ].filter(Boolean) as Array<1 | 2 | 3>;
+
+              const total = Math.max(1, available.length);
+              const idx = Math.max(0, available.indexOf(currentPart));
+              const pct = ((idx + 1) / total) * 100;
+
+              return (
+                <>
+                  <div className="flex items-center justify-between text-sm text-muted-foreground mb-2">
+                    <span>Test Progress</span>
+                    <span>Part {idx + 1} of {total}</span>
+                  </div>
+                  <Progress value={pct} className="h-2" />
+                </>
+              );
+            })()}
           </div>
         </div>
       </main>

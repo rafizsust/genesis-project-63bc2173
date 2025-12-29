@@ -41,12 +41,12 @@ export function TestStartOverlay({
   const [hasTestedAudio, setHasTestedAudio] = useState(module !== 'listening' && module !== 'speaking');
   const [hasTestedMic, setHasTestedMic] = useState(module !== 'speaking');
   const [skippedAudioTest, setSkippedAudioTest] = useState(false);
+  const [skippedMicTest, setSkippedMicTest] = useState(false);
 
   const needsAudioTest = module === 'listening' || module === 'speaking';
   const needsMicTest = module === 'speaking';
-  // Audio test is optional for listening - users can skip and start directly
-  // Mic test is still required for speaking
-  const isReady = (!needsMicTest || hasTestedMic);
+  // Audio/microphone tests are recommended but optional. Start should always be available.
+  const isReady = true;
 
   const testAudio = () => {
     try {
@@ -199,18 +199,32 @@ export function TestStartOverlay({
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Mic className="w-5 h-5 text-primary" />
-                  <span className="text-sm font-medium">Test Your Microphone</span>
+                  <span className="text-sm font-medium">Test Your Microphone (Optional)</span>
                 </div>
-                <Button 
-                  size="sm" 
-                  variant={hasTestedMic ? "secondary" : "default"}
-                  onClick={testMicrophone}
-                >
-                  {hasTestedMic ? '✓ Mic Works' : 'Test Microphone'}
-                </Button>
+                <div className="flex gap-2">
+                  {!hasTestedMic && !skippedMicTest && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => {
+                        setSkippedMicTest(true);
+                        setHasTestedMic(true);
+                      }}
+                    >
+                      Skip
+                    </Button>
+                  )}
+                  <Button
+                    size="sm"
+                    variant={hasTestedMic ? "secondary" : "default"}
+                    onClick={testMicrophone}
+                  >
+                    {hasTestedMic ? '✓ Mic Checked' : 'Test Microphone'}
+                  </Button>
+                </div>
               </div>
               <p className="text-xs text-muted-foreground mt-2">
-                Your browser will ask for microphone permission.
+                Recommended: allow microphone permission now to avoid silent recordings.
               </p>
             </div>
           )}

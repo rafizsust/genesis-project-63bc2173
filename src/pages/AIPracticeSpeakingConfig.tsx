@@ -48,6 +48,25 @@ const DIFFICULTY_OPTIONS: { value: DifficultyLevel; label: string; color: string
   { value: 'expert', label: 'Expert', color: 'bg-purple-500/20 text-purple-600 dark:text-purple-400 border-purple-500/30', description: 'Challenging abstract discussions' },
 ];
 
+// Common IELTS speaking topics (used for dropdown)
+const SPEAKING_TOPIC_OPTIONS = [
+  'Hometown & living area',
+  'Work & career',
+  'Study & education',
+  'Technology',
+  'Travel & holidays',
+  'Food & cooking',
+  'Health & fitness',
+  'Sports & leisure',
+  'Music & art',
+  'Books & films',
+  'Shopping & spending',
+  'Transport',
+  'Environment',
+  'Family & friends',
+  'Culture & traditions',
+] as const;
+
 // Browser TTS voice categories
 interface VoiceOption {
   name: string;
@@ -335,15 +354,35 @@ export default function AIPracticeSpeakingConfig() {
                 <Settings2 className="w-5 h-5" />
                 Topic Preference
               </CardTitle>
-              <CardDescription>Optionally specify a topic you'd like to discuss (or leave empty for random)</CardDescription>
+              <CardDescription>
+                Pick a common IELTS topic (or type your own). Leave empty for random.
+              </CardDescription>
             </CardHeader>
             <CardContent>
-              <Input
-                placeholder="e.g., Technology, Travel, Education, Environment..."
-                value={topicPreference}
-                onChange={(e) => setTopicPreference(e.target.value)}
-                className="max-w-md"
-              />
+              <div className="flex flex-col gap-3 max-w-md">
+                <Select
+                  value={topicPreference || '__random__'}
+                  onValueChange={(v) => setTopicPreference(v === '__random__' ? '' : v)}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select a topic" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__random__">Random (recommended)</SelectItem>
+                    {SPEAKING_TOPIC_OPTIONS.map((t) => (
+                      <SelectItem key={t} value={t}>
+                        {t}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+
+                <Input
+                  placeholder="Or type your own (optional)"
+                  value={topicPreference}
+                  onChange={(e) => setTopicPreference(e.target.value)}
+                />
+              </div>
             </CardContent>
           </Card>
 

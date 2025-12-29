@@ -216,6 +216,7 @@ export default function AISpeakingResults() {
 
   const [result, setResult] = useState<SpeakingResult | null>(null);
   const [loading, setLoading] = useState(true);
+  const [availableParts, setAvailableParts] = useState<number[]>([1, 2, 3]);
   const [expandedParts, setExpandedParts] = useState<Set<number>>(new Set([1, 2, 3]));
 
   useEffect(() => {
@@ -233,6 +234,34 @@ export default function AISpeakingResults() {
     }
 
     const loadResults = async () => {
+      // Determine which parts this test actually contains (so we don't render empty Part 2/3 UI).
+      const { data: testRow } = await supabase
+        .from('ai_practice_tests')
+        .select('payload, question_type')
+        .eq('id', testId)
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+      const partsFromPayload = Array.isArray((testRow as any)?.payload?.speakingParts)
+        ? (testRow as any).payload.speakingParts
+            .map((p: any) => Number(p?.part_number))
+            .filter((n: any) => n === 1 || n === 2 || n === 3)
+        : [];
+
+      const partsFromType = (() => {
+        const qt = String((testRow as any)?.question_type || '');
+        if (qt === 'PART_1') return [1];
+        if (qt === 'PART_2') return [2];
+        if (qt === 'PART_3') return [3];
+        return [];
+      })();
+
+      const partsToShow = (partsFromPayload.length ? partsFromPayload : partsFromType).length
+        ? (partsFromPayload.length ? partsFromPayload : partsFromType)
+        : [1, 2, 3];
+
+      setAvailableParts(partsToShow);
+
       // Try to find the result in ai_practice_results
       const { data, error } = await supabase
         .from('ai_practice_results')
@@ -542,7 +571,7 @@ export default function AISpeakingResults() {
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-6">
-                  {[1, 2, 3].map((part) => {
+                  {availableParts.map((part) => {
                     const byQuestion = result.candidate_transcripts.by_question?.[part];
                     const byPart = result.candidate_transcripts.by_part?.[part];
 
@@ -626,7 +655,9 @@ export default function AISpeakingResults() {
 
             {/* Part-by-Part Analysis */}
             <TabsContent value="parts" className="mt-6 space-y-4">
-              {report.part_analysis && report.part_analysis.map((part) => (
+              {report.part_analysis && report.part_analysis
+                .filter((p) => availableParts.includes(p.part_number))
+                .map((part) => (
                 <Card key={part.part_number}>
                   <CardHeader 
                     className="cursor-pointer"
