@@ -298,16 +298,26 @@ export default function AIPracticeSpeakingTest() {
 
   // Restart recording for the current question - clears chunks and restarts
   const restartRecording = async () => {
+    const currentPhase = phaseRef.current;
+    const resetSeconds =
+      currentPhase === 'part1_recording'
+        ? TIMING.PART1_QUESTION
+        : currentPhase === 'part2_recording'
+          ? TIMING.PART2_SPEAK
+          : currentPhase === 'part3_recording'
+            ? TIMING.PART3_QUESTION
+            : null;
+
     // Stop current recording if active
     const recorder = mediaRecorderRef.current;
     if (recorder && recorder.state === 'recording') {
       recorder.stop();
       recorder.stream.getTracks().forEach((t) => t.stop());
     }
-    
+
     // Clear current chunks
     audioChunksRef.current = [];
-    
+
     // Clear the audio segment for the current question
     const meta = getActiveSegmentMeta();
     if (meta?.key) {
@@ -317,13 +327,21 @@ export default function AIPracticeSpeakingTest() {
         return next;
       });
     }
-    
+
     setIsRecording(false);
-    
+
+    // Reset the countdown back to the full time for this question
+    if (resetSeconds != null) {
+      setTimeLeft(resetSeconds);
+      if (currentPhase === 'part2_recording') {
+        part2SpeakStartRef.current = Date.now();
+      }
+    }
+
     // Small delay then restart
-    await new Promise(resolve => setTimeout(resolve, 200));
+    await new Promise((resolve) => setTimeout(resolve, 200));
     await startRecording();
-    
+
     toast({
       title: 'Recording Restarted',
       description: 'Your previous recording has been cleared.',
