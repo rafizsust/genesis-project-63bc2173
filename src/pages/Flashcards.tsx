@@ -53,6 +53,10 @@ interface Deck {
   description?: string | null;
   card_count: number;
   created_at: string;
+  // Progress stats
+  learning_count: number;
+  reviewing_count: number;
+  mastered_count: number;
 }
 
 interface DeckStats {
@@ -84,14 +88,24 @@ export default function Flashcards() {
   const [practiceCards, setPracticeCards] = useState<Flashcard[]>([]);
   const [sessionComplete, setSessionComplete] = useState(false);
   const [, setIsReviewingAll] = useState(false);
+  
+  // Track if initial load has been done to prevent reload on tab switch
+  const [hasInitiallyLoaded, setHasInitiallyLoaded] = useState(false);
 
   useEffect(() => {
-    if (!authLoading && user) {
-      loadDecks();
-    } else if (!authLoading && !user) {
+    if (authLoading) return;
+    
+    if (!user) {
       navigate('/auth');
+      return;
     }
-  }, [user, authLoading, navigate]);
+    
+    // Only load decks on initial mount, not on every auth state change
+    if (!hasInitiallyLoaded) {
+      loadDecks();
+      setHasInitiallyLoaded(true);
+    }
+  }, [user, authLoading, navigate, hasInitiallyLoaded]);
 
   const loadDecks = async () => {
     if (!user) return;
@@ -106,14 +120,25 @@ export default function Flashcards() {
 
       if (error) throw error;
 
-      // Get card counts for each deck
+      // Get card counts and status breakdowns for each deck
       const decksWithCounts = await Promise.all((data || []).map(async (deck) => {
-        const { count } = await supabase
+        const { data: cards } = await supabase
           .from('flashcard_cards')
-          .select('*', { count: 'exact', head: true })
+          .select('status')
           .eq('deck_id', deck.id);
         
-        return { ...deck, card_count: count || 0 };
+        const cardsList = cards || [];
+        const learning_count = cardsList.filter(c => c.status === 'learning').length;
+        const reviewing_count = cardsList.filter(c => c.status === 'reviewing').length;
+        const mastered_count = cardsList.filter(c => c.status === 'mastered').length;
+        
+        return { 
+          ...deck, 
+          card_count: cardsList.length,
+          learning_count,
+          reviewing_count,
+          mastered_count,
+        };
       }));
 
       setDecks(decksWithCounts);
@@ -231,7 +256,7 @@ export default function Flashcards() {
 
       if (error) throw error;
 
-      setDecks([{ ...data, card_count: 0 }, ...decks]);
+      setDecks([{ ...data, card_count: 0, learning_count: 0, reviewing_count: 0, mastered_count: 0 }, ...decks]);
       setNewDeckName('');
       setNewDeckDescription('');
       setShowAddDeck(false);
@@ -582,40 +607,72 @@ export default function Flashcards() {
               </Card>
             ) : (
               <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                {decks.map((deck) => (
-                  <Card 
-                    key={deck.id}
-                    className="cursor-pointer hover:border-primary/30 hover:shadow-md transition-all"
-                    onClick={() => selectDeck(deck)}
-                  >
-                    <CardHeader className="pb-2">
-                      <CardTitle className="text-lg flex items-center justify-between">
-                        {deck.name}
-                        <Button 
-                          variant="ghost" 
-                          size="icon"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            deleteDeck(deck.id);
-                          }}
-                        >
-                          <Trash2 size={16} className="text-muted-foreground hover:text-destructive" />
-                        </Button>
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      {deck.description && (
-                        <p className="text-sm text-muted-foreground mb-2 line-clamp-1">{deck.description}</p>
-                      )}
-                      <div className="flex items-center justify-between">
-                        <Badge variant="secondary">{deck.card_count} cards</Badge>
-                        <span className="text-xs text-muted-foreground">
-                          {new Date(deck.created_at).toLocaleDateString()}
-                        </span>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
+                {decks.map((deck) => {
+                  const masteredPercent = deck.card_count > 0 
+                    ? Math.round((deck.mastered_count / deck.card_count) * 100) 
+                    : 0;
+                  
+                  return (
+                    <Card 
+                      key={deck.id}
+                      className="cursor-pointer hover:border-primary/30 hover:shadow-md transition-all"
+                      onClick={() => selectDeck(deck)}
+                    >
+                      <CardHeader className="pb-2">
+                        <CardTitle className="text-lg flex items-center justify-between">
+                          {deck.name}
+                          <Button 
+                            variant="ghost" 
+                            size="icon"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              deleteDeck(deck.id);
+                            }}
+                          >
+                            <Trash2 size={16} className="text-muted-foreground hover:text-destructive" />
+                          </Button>
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent className="space-y-3">
+                        {deck.description && (
+                          <p className="text-sm text-muted-foreground line-clamp-1">{deck.description}</p>
+                        )}
+                        
+                        {/* Progress stats */}
+                        {deck.card_count > 0 && (
+                          <div className="space-y-2">
+                            <div className="flex items-center gap-3 text-xs">
+                              <div className="flex items-center gap-1">
+                                <Brain className="w-3 h-3 text-amber-500" />
+                                <span className="text-amber-600 dark:text-amber-400">{deck.learning_count}</span>
+                              </div>
+                              <div className="flex items-center gap-1">
+                                <Zap className="w-3 h-3 text-blue-500" />
+                                <span className="text-blue-600 dark:text-blue-400">{deck.reviewing_count}</span>
+                              </div>
+                              <div className="flex items-center gap-1">
+                                <Target className="w-3 h-3 text-emerald-500" />
+                                <span className="text-emerald-600 dark:text-emerald-400">{deck.mastered_count}</span>
+                              </div>
+                            </div>
+                            <Progress 
+                              value={masteredPercent} 
+                              className="h-1.5"
+                            />
+                            <p className="text-[10px] text-muted-foreground text-right">{masteredPercent}% mastered</p>
+                          </div>
+                        )}
+                        
+                        <div className="flex items-center justify-between pt-1">
+                          <Badge variant="secondary">{deck.card_count} cards</Badge>
+                          <span className="text-xs text-muted-foreground">
+                            {new Date(deck.created_at).toLocaleDateString()}
+                          </span>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  );
+                })}
               </div>
             )}
           </>

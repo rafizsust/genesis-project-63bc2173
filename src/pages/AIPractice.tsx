@@ -364,6 +364,34 @@ export default function AIPractice() {
       return;
     }
 
+    // Check quota before starting - warn if over 80%
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      const { data: usageData } = await supabase
+        .from('gemini_daily_usage')
+        .select('tokens_used')
+        .eq('user_id', user.id)
+        .eq('usage_date', today)
+        .maybeSingle();
+
+      const GEMINI_FREE_DAILY_LIMIT = 1500000;
+      const tokensUsed = usageData?.tokens_used || 0;
+      const usagePercent = (tokensUsed / GEMINI_FREE_DAILY_LIMIT) * 100;
+
+      if (usagePercent >= 80) {
+        toast({
+          title: usagePercent >= 95 ? '⚠️ Quota Nearly Exhausted' : '⚠️ Quota Running Low',
+          description: usagePercent >= 95 
+            ? `You've used ${usagePercent.toFixed(0)}% of your daily quota. This test may fail if quota is exceeded.`
+            : `You've used ${usagePercent.toFixed(0)}% of your daily quota. Consider spacing out your practice.`,
+          variant: usagePercent >= 95 ? 'destructive' : 'default',
+          duration: 6000,
+        });
+      }
+    } catch (err) {
+      console.warn('Could not check quota:', err);
+    }
+
     setIsGenerating(true);
     setGenerationStep(0);
 
