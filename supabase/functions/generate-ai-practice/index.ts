@@ -2154,10 +2154,19 @@ serve(async (req) => {
         let writingPrompt: string;
         
         if (isTask1) {
-          const visualTypeToUse = visualType === 'RANDOM' 
-            ? ['BAR_CHART', 'LINE_GRAPH', 'PIE_CHART', 'TABLE', 'PROCESS_DIAGRAM'][Math.floor(Math.random() * 5)]
-            : visualType;
-          
+          const visualTypeToUse =
+            visualType === 'RANDOM'
+              ? [
+                  'BAR_CHART',
+                  'LINE_GRAPH',
+                  'PIE_CHART',
+                  'TABLE',
+                  'MIXED_CHARTS',
+                  'PROCESS_DIAGRAM',
+                  'MAP',
+                ][Math.floor(Math.random() * 7)]
+              : visualType;
+
           // Build the chart data structure based on visual type
           let chartDataSchema = '';
           switch (visualTypeToUse) {
@@ -2204,6 +2213,36 @@ serve(async (req) => {
           {"label": "[segment2]", "value": [percentage]},
           {"label": "[segment3]", "value": [percentage]},
           {"label": "[segment4]", "value": [percentage]}
+        ]
+      }`;
+              break;
+            case 'MIXED_CHARTS':
+              chartDataSchema = `"visualData": {
+        "type": "MIXED_CHARTS",
+        "title": "[short descriptive title]",
+        "charts": [
+          {
+            "type": "BAR_CHART",
+            "title": "[bar chart title, max 40 chars]",
+            "xAxisLabel": "[x-axis label]",
+            "yAxisLabel": "[y-axis label]",
+            "data": [
+              {"label": "[item1, max 15 chars]", "value": [number]},
+              {"label": "[item2]", "value": [number]},
+              {"label": "[item3]", "value": [number]},
+              {"label": "[item4]", "value": [number]}
+            ]
+          },
+          {
+            "type": "PIE_CHART",
+            "title": "[pie chart title, max 40 chars]",
+            "data": [
+              {"label": "[segment1, max 15 chars]", "value": [percentage as whole number]},
+              {"label": "[segment2]", "value": [percentage]},
+              {"label": "[segment3]", "value": [percentage]},
+              {"label": "[segment4]", "value": [percentage]}
+            ]
+          }
         ]
       }`;
               break;
@@ -2260,6 +2299,7 @@ serve(async (req) => {
         "data": [{"label": "[item]", "value": [number]}]
       }`;
           }
+
             
           writingPrompt = `You are a data analyst. Generate an IELTS Academic Writing Task 1 with BOTH the essay question AND the chart data.
 

@@ -201,7 +201,7 @@ function BarChartRenderer({
   );
 }
 
-// Line Graph Renderer (simplified as connected data points)
+// Line Graph Renderer (SVG-based for accurate lines + readable labels)
 function LineGraphRenderer({
   data,
   getColor,
@@ -209,64 +209,165 @@ function LineGraphRenderer({
   data: IELTSChartData;
   getColor: (index: number, color?: string) => string;
 }) {
-  const series = data.series || [];
-  
-  // Calculate bounds
-  const allYValues = series.flatMap(s => s.data.map(d => d.y));
-  const maxY = Math.max(...allYValues, 1);
-  const minY = Math.min(...allYValues, 0);
-  const range = maxY - minY || 1;
+  const series = (data.series || []).filter((s) => Array.isArray(s.data) && s.data.length > 0);
 
-  // Get all x labels
-  const xLabels = series[0]?.data.map(d => String(d.x)) || [];
+  if (series.length === 0) {
+    return (
+      <div className="text-center text-muted-foreground text-sm">
+        Line graph data not available
+      </div>
+    );
+  }
+
+  const allPoints = series.flatMap((s) => s.data);
+  const allY = allPoints.map((p) => p.y);
+  const minY = Math.min(...allY);
+  const maxY = Math.max(...allY);
+  const yPad = Math.max(1, Math.round((maxY - minY) * 0.08));
+  const yMin = minY - yPad;
+  const yMax = maxY + yPad;
+  const yRange = yMax - yMin || 1;
+
+  // Use x labels from the longest series
+  const xLabels = [...series]
+    .sort((a, b) => (b.data?.length || 0) - (a.data?.length || 0))[0]
+    ?.data.map((d) => String(d.x)) ?? [];
+
+  const W = 720;
+  const H = 320;
+  const pad = { left: 56, right: 18, top: 14, bottom: 46 };
+  const innerW = W - pad.left - pad.right;
+  const innerH = H - pad.top - pad.bottom;
+
+  const xCount = Math.max(2, xLabels.length);
+  const xStep = xCount > 1 ? innerW / (xCount - 1) : innerW;
+
+  const xAt = (i: number) => pad.left + i * xStep;
+  const yAt = (y: number) => pad.top + (1 - (y - yMin) / yRange) * innerH;
+
+  const yTicks = 4;
+  const tickValues = Array.from({ length: yTicks + 1 }, (_, i) => {
+    const t = i / yTicks;
+    return yMax - t * yRange;
+  });
+
+  const xLabelEvery = xLabels.length <= 6 ? 1 : xLabels.length <= 10 ? 2 : 3;
 
   return (
     <div className="space-y-3">
       {data.yAxisLabel && (
-        <div className="text-xs text-muted-foreground">{data.yAxisLabel}</div>
+        <div className="text-xs text-muted-foreground text-center">
+          {data.yAxisLabel}
+        </div>
       )}
-      
-      {/* Chart area */}
-      <div className="relative h-48 border-l border-b border-border pl-8 pb-6">
-        {/* Y-axis labels */}
-        <div className="absolute left-0 top-0 h-full flex flex-col justify-between text-xs text-muted-foreground">
-          <span>{maxY}</span>
-          <span>{Math.round((maxY + minY) / 2)}</span>
-          <span>{minY}</span>
-        </div>
 
-        {/* Data points and lines */}
-        <div className="h-full flex items-end justify-between px-2">
-        {xLabels.map((_, xIdx) => (
-          <div key={xIdx} className="flex flex-col items-center gap-1">
-              {series.map((s, sIdx) => {
-                const point = s.data[xIdx];
-                if (!point) return null;
-                const height = ((point.y - minY) / range) * 100;
-                return (
-                  <div
-                    key={sIdx}
-                    className="w-3 h-3 rounded-full border-2 border-background"
-                    style={{ 
-                      backgroundColor: getColor(sIdx, s.color),
-                      marginBottom: `${height}%`,
-                      position: 'absolute',
-                      bottom: `${height}%`,
-                    }}
-                    title={`${s.name}: ${point.y}`}
-                  />
-                );
-              })}
-            </div>
-          ))}
-        </div>
+      <div className="w-full overflow-x-auto">
+        <svg
+          className="block mx-auto"
+          viewBox={`0 0 ${W} ${H}`}
+          role="img"
+          aria-label={data.title || 'Line graph'}
+          preserveAspectRatio="xMidYMid meet"
+        >
+          {/* Grid + Y ticks */}
+          {tickValues.map((v, idx) => {
+            const y = yAt(v);
+            return (
+              <g key={idx}>
+                <line
+                  x1={pad.left}
+                  y1={y}
+                  x2={W - pad.right}
+                  y2={y}
+                  stroke="hsl(var(--border))"
+                  strokeOpacity={0.5}
+                  strokeWidth={1}
+                />
+                <text
+                  x={pad.left - 10}
+                  y={y + 4}
+                  textAnchor="end"
+                  fontSize={12}
+                  fill="hsl(var(--muted-foreground))"
+                >
+                  {Math.round(v)}
+                </text>
+              </g>
+            );
+          })}
 
-        {/* X-axis labels */}
-        <div className="absolute bottom-0 left-8 right-0 flex justify-between text-xs text-muted-foreground">
-          {xLabels.map((label, idx) => (
-            <span key={idx} className="truncate max-w-16">{label}</span>
-          ))}
-        </div>
+          {/* Axes */}
+          <line
+            x1={pad.left}
+            y1={pad.top}
+            x2={pad.left}
+            y2={H - pad.bottom}
+            stroke="hsl(var(--border))"
+            strokeWidth={1.2}
+          />
+          <line
+            x1={pad.left}
+            y1={H - pad.bottom}
+            x2={W - pad.right}
+            y2={H - pad.bottom}
+            stroke="hsl(var(--border))"
+            strokeWidth={1.2}
+          />
+
+          {/* X labels */}
+          {xLabels.map((label, i) => {
+            if (i % xLabelEvery !== 0) return null;
+            const x = xAt(i);
+            const y = H - pad.bottom + 18;
+            return (
+              <text
+                key={i}
+                x={x}
+                y={y}
+                textAnchor="middle"
+                fontSize={12}
+                fill="hsl(var(--muted-foreground))"
+              >
+                {label}
+              </text>
+            );
+          })}
+
+          {/* Series */}
+          {series.map((s, sIdx) => {
+            const color = getColor(sIdx, s.color);
+            const pts = s.data
+              .map((p, i) => {
+                const xi = xLabels.findIndex((x) => String(x) === String(p.x));
+                const xIndex = xi >= 0 ? xi : i;
+                return { x: xAt(xIndex), y: yAt(p.y), raw: p };
+              })
+              .sort((a, b) => a.x - b.x);
+
+            const d = pts
+              .map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(2)} ${p.y.toFixed(2)}`)
+              .join(' ');
+
+            return (
+              <g key={sIdx}>
+                <path d={d} fill="none" stroke={color} strokeWidth={2.5} />
+                {pts.map((p, idx) => (
+                  <circle
+                    key={idx}
+                    cx={p.x}
+                    cy={p.y}
+                    r={4}
+                    fill={color}
+                    stroke="hsl(var(--background))"
+                    strokeWidth={2}
+                  >
+                    <title>{`${s.name}: ${p.raw.y}`}</title>
+                  </circle>
+                ))}
+              </g>
+            );
+          })}
+        </svg>
       </div>
 
       {/* Legend */}
@@ -274,7 +375,7 @@ function LineGraphRenderer({
         <div className="flex flex-wrap gap-3 justify-center">
           {series.map((s, idx) => (
             <div key={idx} className="flex items-center gap-1 text-xs">
-              <div 
+              <div
                 className="w-3 h-3 rounded-full"
                 style={{ backgroundColor: getColor(idx, s.color) }}
               />
@@ -394,14 +495,154 @@ function TableRenderer({ data }: { data: IELTSChartData }) {
 
 // Process Diagram Renderer
 function ProcessDiagramRenderer({ data }: { data: IELTSChartData }) {
-  const steps = data.steps || [];
+  const steps = (data.steps || []).filter((s) => s?.label);
+
+  if (steps.length === 0) {
+    return (
+      <div className="text-center text-muted-foreground text-sm">
+        Process diagram data not available
+      </div>
+    );
+  }
+
+  // Prefer a circular/ring layout (closer to IELTS) when the diagram is a short sequence.
+  const useRing = steps.length >= 4 && steps.length <= 10;
+
+  if (!useRing) {
+    return (
+      <div className="flex flex-col gap-2">
+        {steps.map((step, idx) => (
+          <div key={idx} className="flex items-center gap-2">
+            <div className="flex-1 bg-muted/30 border border-border rounded-lg px-3 py-2">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold text-primary bg-primary/10 px-2 py-0.5 rounded">
+                  {idx + 1}
+                </span>
+                <span className="text-sm font-medium text-foreground">{step.label}</span>
+              </div>
+              {step.description && (
+                <p className="text-xs text-muted-foreground mt-1 pl-8">{step.description}</p>
+              )}
+            </div>
+            {idx < steps.length - 1 && (
+              <div className="text-muted-foreground text-lg">↓</div>
+            )}
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  const W = 760;
+  const H = 360;
+  const cx = W / 2;
+  const cy = H / 2;
+  const ringR = 120;
+  const nodeR = 18;
+
+  const angleFor = (i: number) => (-Math.PI / 2) + (i * 2 * Math.PI) / steps.length;
+  const nodeAt = (i: number) => {
+    const a = angleFor(i);
+    return { x: cx + ringR * Math.cos(a), y: cy + ringR * Math.sin(a) };
+  };
 
   return (
-    <div className="flex flex-col gap-2">
-      {steps.map((step, idx) => (
-        <div key={idx} className="flex items-center gap-2">
-          {/* Step box */}
-          <div className="flex-1 bg-muted/30 border border-border rounded-lg px-3 py-2">
+    <div className="space-y-3">
+      <div className="w-full overflow-x-auto">
+        <svg
+          className="block mx-auto"
+          viewBox={`0 0 ${W} ${H}`}
+          role="img"
+          aria-label={data.title || 'Process diagram'}
+          preserveAspectRatio="xMidYMid meet"
+        >
+          {/* Ring */}
+          <circle
+            cx={cx}
+            cy={cy}
+            r={ringR}
+            fill="none"
+            stroke="hsl(var(--border))"
+            strokeOpacity={0.7}
+            strokeWidth={2}
+          />
+
+          {/* Arrows */}
+          <defs>
+            <marker
+              id="arrow"
+              markerWidth="10"
+              markerHeight="10"
+              refX="8"
+              refY="3"
+              orient="auto"
+              markerUnits="strokeWidth"
+            >
+              <path d="M0,0 L0,6 L9,3 z" fill="hsl(var(--muted-foreground))" />
+            </marker>
+          </defs>
+
+          {steps.map((_, i) => {
+            const a = nodeAt(i);
+            const b = nodeAt((i + 1) % steps.length);
+            // Draw a slightly inset chord so arrows don't overlap nodes
+            const inset = 12;
+            const dx = b.x - a.x;
+            const dy = b.y - a.y;
+            const len = Math.max(1, Math.sqrt(dx * dx + dy * dy));
+            const ax = a.x + (dx / len) * inset;
+            const ay = a.y + (dy / len) * inset;
+            const bx = b.x - (dx / len) * inset;
+            const by = b.y - (dy / len) * inset;
+            return (
+              <line
+                key={i}
+                x1={ax}
+                y1={ay}
+                x2={bx}
+                y2={by}
+                stroke="hsl(var(--muted-foreground))"
+                strokeOpacity={0.7}
+                strokeWidth={1.5}
+                markerEnd="url(#arrow)"
+              />
+            );
+          })}
+
+          {/* Nodes + numbers */}
+          {steps.map((step, i) => {
+            const p = nodeAt(i);
+            return (
+              <g key={i}>
+                <circle
+                  cx={p.x}
+                  cy={p.y}
+                  r={nodeR}
+                  fill="hsl(var(--primary) / 0.12)"
+                  stroke="hsl(var(--primary))"
+                  strokeWidth={2}
+                />
+                <text
+                  x={p.x}
+                  y={p.y + 5}
+                  textAnchor="middle"
+                  fontSize={12}
+                  fontWeight={700}
+                  fill="hsl(var(--primary))"
+                >
+                  {i + 1}
+                </text>
+                <title>{step.label}</title>
+              </g>
+            );
+          })}
+        </svg>
+      </div>
+
+      {/* Step captions (IELTS-style, readable) */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+        {steps.map((step, idx) => (
+          <div key={idx} className="bg-muted/20 border border-border rounded-lg px-3 py-2">
             <div className="flex items-center gap-2">
               <span className="text-xs font-bold text-primary bg-primary/10 px-2 py-0.5 rounded">
                 {idx + 1}
@@ -412,13 +653,8 @@ function ProcessDiagramRenderer({ data }: { data: IELTSChartData }) {
               <p className="text-xs text-muted-foreground mt-1 pl-8">{step.description}</p>
             )}
           </div>
-          
-          {/* Arrow (except for last step) */}
-          {idx < steps.length - 1 && (
-            <div className="text-muted-foreground text-lg">↓</div>
-          )}
-        </div>
-      ))}
+        ))}
+      </div>
     </div>
   );
 }
