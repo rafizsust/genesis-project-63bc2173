@@ -188,6 +188,12 @@ async function waitWithBackoff(attempt: number, baseDelayMs: number = 1000): Pro
   await new Promise(resolve => setTimeout(resolve, delay));
 }
 
+// Simple sleep utility to prevent rate limiting between API calls
+async function sleep(ms: number): Promise<void> {
+  console.log(`Rate limit cooldown: waiting ${ms}ms...`);
+  await new Promise(resolve => setTimeout(resolve, ms));
+}
+
 async function callGemini(apiKey: string, prompt: string, maxRetries: number = 2): Promise<string | null> {
   lastGeminiError = null;
   lastTokensUsed = 0;
@@ -468,55 +474,81 @@ CRITICAL RULES:
 - Use whole numbers for values
 - Keep all text labels SHORT (max 15 characters)`;
 
-  try {
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiApiKey}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: chartPrompt }] }],
-          generationConfig: {
-            temperature: 0.3, // Low temp for consistent JSON
-            maxOutputTokens: 500, // Much smaller than SVG needed
-          },
-        }),
+  // Retry logic for 429 rate limit errors
+  const maxRetries = 1;
+  
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      if (attempt > 0) {
+        console.log(`Retry attempt ${attempt} for chart data generation...`);
       }
-    );
+      
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiApiKey}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: chartPrompt }] }],
+            generationConfig: {
+              temperature: 0.3, // Low temp for consistent JSON
+              maxOutputTokens: 500, // Much smaller than SVG needed
+            },
+          }),
+        }
+      );
 
-    if (!response.ok) {
-      console.error(`Chart data generation failed: ${response.status}`);
+      if (!response.ok) {
+        const errorStatus = response.status;
+        console.error(`Chart data generation failed: ${errorStatus}`);
+        
+        // If 429 rate limit and we have retries left, wait 5 seconds and retry
+        if (errorStatus === 429 && attempt < maxRetries) {
+          console.log('Rate limit (429) hit for chart data, waiting 5 seconds before retry...');
+          await sleep(5000);
+          continue;
+        }
+        
+        return null;
+      }
+
+      const data = await response.json();
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      
+      if (!text) {
+        console.error('Empty response from Gemini for chart data');
+        return null;
+      }
+
+      console.log(`Chart data response: ${text.length} chars`);
+      console.log(`Raw response: ${text.substring(0, 300)}`);
+
+      // Extract JSON from response
+      const jsonStr = extractJsonFromResponse(text);
+      const chartData = JSON.parse(jsonStr);
+      
+      // Validate required fields
+      if (!chartData.type) {
+        console.error('Chart data missing type field');
+        return null;
+      }
+
+      console.log(`Chart data generated successfully: ${chartData.type}`);
+      return chartData;
+
+    } catch (err) {
+      console.error(`Chart data generation error (attempt ${attempt}):`, err);
+      if (attempt < maxRetries) {
+        console.log('Retrying after error...');
+        await sleep(3000);
+        continue;
+      }
       return null;
     }
-
-    const data = await response.json();
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-    
-    if (!text) {
-      console.error('Empty response from Gemini for chart data');
-      return null;
-    }
-
-    console.log(`Chart data response: ${text.length} chars`);
-    console.log(`Raw response: ${text.substring(0, 300)}`);
-
-    // Extract JSON from response
-    const jsonStr = extractJsonFromResponse(text);
-    const chartData = JSON.parse(jsonStr);
-    
-    // Validate required fields
-    if (!chartData.type) {
-      console.error('Chart data missing type field');
-      return null;
-    }
-
-    console.log(`Chart data generated successfully: ${chartData.type}`);
-    return chartData;
-
-  } catch (err) {
-    console.error('Chart data generation error:', err);
-    return null;
   }
+  
+  console.error('All chart data generation attempts failed');
+  return null;
 }
 
 // Note: Old SVG generation functions (mergeTruncatedSvg, generateMapSvg, 
@@ -2375,8 +2407,12 @@ Return ONLY valid JSON:
           const parsed = JSON.parse(jsonStr);
           
           // For Task 1, generate chart data as JSON (not SVG)
+          // Add 3-second cooldown before chart data call to prevent 429 rate limit
           let chartData: object | null = null;
           if (isTask1 && parsed.visual_description) {
+            console.log(`Waiting 3 seconds before chart data call to prevent rate limiting...`);
+            await sleep(3000);
+            
             console.log(`Generating chart data for Task 1: ${parsed.visual_type}`);
             chartData = await generateChartData(
               parsed.visual_type || visualType,
@@ -2411,12 +2447,16 @@ Return ONLY valid JSON:
         );
 
         if (isFullTest) {
-          // Generate both tasks
-          console.log('Generating full writing test with both tasks...');
-          const [task1Result, task2Result] = await Promise.all([
-            generateSingleWritingTask(1, task1VisualType, task2EssayType),
-            generateSingleWritingTask(2, task1VisualType, task2EssayType),
-          ]);
+          // Generate both tasks SEQUENTIALLY to avoid rate limiting
+          // Do NOT use Promise.all - API calls must be spaced out
+          console.log('Generating full writing test - Task 1 first...');
+          const task1Result = await generateSingleWritingTask(1, task1VisualType, task2EssayType);
+          
+          console.log('Waiting 3 seconds before Task 2 to prevent rate limiting...');
+          await sleep(3000);
+          
+          console.log('Generating Task 2...');
+          const task2Result = await generateSingleWritingTask(2, task1VisualType, task2EssayType);
           
           // Update quota tracking
           if (writingTotalTokensUsed > 0) {
