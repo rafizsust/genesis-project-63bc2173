@@ -2,6 +2,7 @@ import { Brain, Loader2, CheckCircle2, Circle, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { FlashcardQuickPractice } from './FlashcardQuickPractice';
 
 // Fun IELTS-related facts and tips to display during loading
 const IELTS_FUN_FACTS = [
@@ -45,6 +46,7 @@ export function AILoadingScreen({
   const [currentFactIndex, setCurrentFactIndex] = useState(() => 
     Math.floor(Math.random() * IELTS_FUN_FACTS.length)
   );
+  const [hasFlashcards] = useState<boolean | null>(null);
 
   // Timer to track elapsed time
   useEffect(() => {
@@ -55,14 +57,16 @@ export function AILoadingScreen({
     return () => clearInterval(interval);
   }, []);
 
-  // Rotate through fun facts every 5 seconds
+  // Rotate through fun facts every 5 seconds (only if no flashcards)
   useEffect(() => {
+    if (hasFlashcards) return;
+    
     const factInterval = setInterval(() => {
       setCurrentFactIndex(prev => (prev + 1) % IELTS_FUN_FACTS.length);
     }, 5000);
 
     return () => clearInterval(factInterval);
-  }, []);
+  }, [hasFlashcards]);
 
   // Format time as mm:ss
   const formatTime = (seconds: number) => {
@@ -153,11 +157,29 @@ export function AILoadingScreen({
           {progressSteps[currentStepIndex]}...
         </p>
 
-        {/* Fun Fact / Tip Card */}
-        <div className="mt-4 p-3 bg-primary/5 border border-primary/20 rounded-lg">
-          <p className="text-sm text-foreground animate-fade-in" key={currentFactIndex}>
-            {IELTS_FUN_FACTS[currentFactIndex]}
-          </p>
+        {/* Flashcard Practice OR Fun Fact */}
+        <div className="mt-4">
+          <FlashcardQuickPractice 
+            className={hasFlashcards === false ? 'hidden' : ''} 
+          />
+          
+          {/* Show tips if no flashcards */}
+          {hasFlashcards === false && (
+            <div className="p-3 bg-primary/5 border border-primary/20 rounded-lg">
+              <p className="text-sm text-foreground animate-fade-in" key={currentFactIndex}>
+                {IELTS_FUN_FACTS[currentFactIndex]}
+              </p>
+            </div>
+          )}
+          
+          {/* Initially show tips until we know if user has flashcards */}
+          {hasFlashcards === null && (
+            <div className="p-3 bg-primary/5 border border-primary/20 rounded-lg">
+              <p className="text-sm text-foreground animate-fade-in" key={currentFactIndex}>
+                {IELTS_FUN_FACTS[currentFactIndex]}
+              </p>
+            </div>
+          )}
         </div>
       </div>
     </div>

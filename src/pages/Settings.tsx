@@ -5,7 +5,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Button } from '@/components/ui/button';
 import { GeminiApiKeyManager } from '@/components/user/GeminiApiKeyManager';
 import { GeminiQuotaDisplay } from '@/components/common/GeminiQuotaDisplay';
-import { AudioTranscriptionPOC } from '@/components/user/AudioTranscriptionPOC';
 import { toast } from 'sonner';
 import { Navbar } from '@/components/Navbar';
 import { Footer } from '@/components/Footer';
@@ -130,9 +129,6 @@ export default function Settings() {
               <GeminiQuotaDisplay showCard={false} />
             </CardContent>
           </Card>
-
-          {/* Audio Transcription POC */}
-          <AudioTranscriptionPOC />
         </div>
       </main>
       <Footer />
