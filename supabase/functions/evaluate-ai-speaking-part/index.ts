@@ -1,6 +1,8 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { crypto } from "https://deno.land/std@0.168.0/crypto/mod.ts";
+import { PutObjectCommand } from "https://esm.sh/@aws-sdk/client-s3@3.529.1";
+import { getR2Client, getR2Config } from "../_shared/r2Client.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -134,11 +136,11 @@ serve(async (req) => {
     console.log(`[evaluate-ai-speaking-part] Test: ${testId}, Part: ${partNumber}, User: ${user.id}`);
     console.log(`[evaluate-ai-speaking-part] Audio segments: ${audioKeys.length}`);
 
-    // Service client for storage
-    const supabaseService = createClient(supabaseUrl, supabaseServiceKey);
-
-    // Upload audio and get URLs
+    // Upload audio to R2 and get URLs
+    const r2Client = getR2Client();
+    const { bucketName, publicUrl } = getR2Config();
     const audioUrls: Record<string, string> = {};
+    
     for (const key of audioKeys) {
       try {
         const value = audioData[key];
@@ -146,17 +148,18 @@ serve(async (req) => {
         if (!base64 || base64.length < 1000) continue;
 
         const audioBytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
-        const path = `ai-speaking/${user.id}/${testId}/${key}.webm`;
+        const r2Key = `speaking-audios/ai-speaking/${user.id}/${testId}/${key}.webm`;
 
-        const { error: uploadError } = await supabaseService.storage
-          .from('speaking-audios')
-          .upload(path, audioBytes, { contentType: 'audio/webm', upsert: true });
+        const command = new PutObjectCommand({
+          Bucket: bucketName,
+          Key: r2Key,
+          Body: audioBytes,
+          ContentType: 'audio/webm',
+        });
 
-        if (!uploadError) {
-          audioUrls[key] = supabaseService.storage.from('speaking-audios').getPublicUrl(path).data.publicUrl;
-        } else {
-          console.warn(`Upload failed for ${key}:`, uploadError.message);
-        }
+        await r2Client.send(command);
+        audioUrls[key] = `${publicUrl?.replace(/\/$/, '')}/${r2Key}`;
+        console.log(`[evaluate-ai-speaking-part] Uploaded audio to R2: ${r2Key}`);
       } catch (err) {
         console.error(`Failed to upload audio for ${key}:`, err);
       }
