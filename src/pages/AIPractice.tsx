@@ -254,14 +254,6 @@ export default function AIPractice() {
     }
   }, [activeModule, readingCompletions, listeningCompletions, writingCompletions, speakingCompletions]);
 
-  // Calculate topic select value
-  const topicSelectValue = useMemo(() => {
-    if (!topicPreference) return '__random__';
-    // Type assertion to fix readonly array issue
-    const topicsArray = currentTopics as readonly string[];
-    return topicsArray.includes(topicPreference) ? topicPreference : '__custom__';
-  }, [topicPreference, currentTopics]);
-
   // Browser TTS voices for speaking
   const [availableVoices, setAvailableVoices] = useState<{ name: string; lang: string; displayName: string }[]>([]);
   const [selectedVoice, setSelectedVoice] = useState('');
@@ -1422,69 +1414,76 @@ export default function AIPractice() {
                   <Target className="w-4 h-4" />
                   Difficulty Level
                 </Label>
-                <div className="flex gap-3">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                   {DIFFICULTY_OPTIONS.map((opt) => (
-                    <button
+                    <SelectableCard
                       key={opt.value}
+                      isSelected={difficulty === opt.value}
                       onClick={() => setDifficulty(opt.value)}
-                      className={`flex-1 py-3 px-4 rounded-lg border-2 font-medium transition-all ${
-                        difficulty === opt.value
-                          ? opt.color + ' border-current'
-                          : 'border-border hover:border-primary/50'
-                      }`}
+                      className={difficulty === opt.value ? opt.color : ''}
                     >
-                      {opt.label}
-                    </button>
+                      <div className="font-medium text-center pr-4">{opt.label}</div>
+                    </SelectableCard>
                   ))}
                 </div>
               </div>
 
-              {/* Topic Preference with Dropdown - Hidden for Writing (has visual/essay type selectors) */}
+              {/* Topic Preference with Visual Cards - Hidden for Writing (has visual/essay type selectors) */}
               {activeModule !== 'writing' && (
                 <div className="space-y-3">
                   <Label className="text-base font-medium">
                     Topic Preference
                   </Label>
-                  <div className="flex flex-col gap-3 max-w-md">
-                    <Select
-                      value={topicSelectValue}
-                      onValueChange={(v) => {
-                        if (v === '__random__') {
-                          setTopicPreference('');
-                          return;
-                        }
-                        if (v === '__custom__') {
-                          // Keep current custom text
-                          return;
-                        }
-                        setTopicPreference(v);
-                      }}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select a topic" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="__random__">Random (recommended)</SelectItem>
-                        <SelectItem value="__custom__">Custom (type below)</SelectItem>
-                        {currentTopics.map((t) => (
-                          <SelectItem key={t} value={t}>
-                            {currentCompletions.getTopicLabel(t)}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                  
+                  {/* Random option */}
+                  <SelectableCard
+                    isSelected={!topicPreference}
+                    onClick={() => setTopicPreference('')}
+                    className="max-w-md"
+                  >
+                    <div className="flex items-center gap-2 pr-6">
+                      <Sparkles className="w-4 h-4 text-primary" />
+                      <span className="font-medium">Random Topic</span>
+                      <span className="text-xs text-muted-foreground">(recommended)</span>
+                    </div>
+                  </SelectableCard>
 
+                  {/* Topic Grid */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 max-h-[300px] overflow-y-auto pr-1">
+                    {currentTopics.map((topic) => {
+                      const count = currentCompletions.completions[topic] || 0;
+                      return (
+                        <SelectableCard
+                          key={topic}
+                          isSelected={topicPreference === topic}
+                          onClick={() => setTopicPreference(topic)}
+                          autoScrollOnSelect
+                          className="py-3"
+                        >
+                          <div className="flex items-center justify-between gap-2 pr-6">
+                            <span className="text-sm font-medium truncate">{topic}</span>
+                            {count > 0 && (
+                              <Badge variant="secondary" className="shrink-0 text-xs">
+                                {count}×
+                              </Badge>
+                            )}
+                          </div>
+                        </SelectableCard>
+                      );
+                    })}
+                  </div>
+
+                  {/* Custom topic input */}
+                  <div className="flex flex-col gap-2 max-w-md">
+                    <Label className="text-sm text-muted-foreground">Or type your own:</Label>
                     <Input
                       id="topic"
                       value={topicPreference}
                       onChange={(e) => setTopicPreference(e.target.value.slice(0, 100))}
-                      placeholder="Or type your own topic (optional)"
+                      placeholder="Enter custom topic..."
                       maxLength={100}
                     />
                   </div>
-                  <p className="text-sm text-muted-foreground">
-                    Select a common IELTS topic or type your own. Leave empty for random.
-                  </p>
                 </div>
               )}
 
