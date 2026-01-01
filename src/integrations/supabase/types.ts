@@ -528,25 +528,31 @@ export type Database = {
         Row: {
           avatar_url: string | null
           created_at: string
+          daily_credits_used: number
           email: string | null
           full_name: string | null
           id: string
+          last_reset_date: string
           updated_at: string
         }
         Insert: {
           avatar_url?: string | null
           created_at?: string
+          daily_credits_used?: number
           email?: string | null
           full_name?: string | null
           id: string
+          last_reset_date?: string
           updated_at?: string
         }
         Update: {
           avatar_url?: string | null
           created_at?: string
+          daily_credits_used?: number
           email?: string | null
           full_name?: string | null
           id?: string
+          last_reset_date?: string
           updated_at?: string
         }
         Relationships: []

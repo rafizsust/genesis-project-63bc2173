@@ -4,8 +4,130 @@ import { crypto } from "https://deno.land/std@0.168.0/crypto/mod.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-gemini-api-key',
 };
+
+// ============================================================================
+// CREDIT SYSTEM - Cost Map and Daily Limits
+// ============================================================================
+const COSTS = {
+  'generate_speaking': 5,
+  'generate_writing': 5,
+  'generate_listening': 20,
+  'generate_reading': 20,
+  'evaluate_speaking': 15,
+  'evaluate_writing': 10,
+  'evaluate_reading': 0,
+  'evaluate_listening': 0,
+  'explain_answer': 2
+};
+
+const DAILY_CREDIT_LIMIT = 100;
+
+// DB-managed API key interface
+interface ApiKeyRecord {
+  id: string;
+  provider: string;
+  key_value: string;
+  is_active: boolean;
+  error_count: number;
+}
+
+// Fetch active Gemini keys from api_keys table
+async function getActiveGeminiKeys(serviceClient: any): Promise<ApiKeyRecord[]> {
+  try {
+    const { data, error } = await serviceClient
+      .from('api_keys')
+      .select('id, provider, key_value, is_active, error_count')
+      .eq('provider', 'gemini')
+      .eq('is_active', true)
+      .order('error_count', { ascending: true });
+    
+    if (error) {
+      console.error('Failed to fetch API keys:', error);
+      return [];
+    }
+    return data || [];
+  } catch (err) {
+    console.error('Error fetching API keys:', err);
+    return [];
+  }
+}
+
+// Check credits (returns error if limit reached)
+async function checkCredits(
+  serviceClient: any, 
+  userId: string, 
+  operationType: keyof typeof COSTS
+): Promise<{ ok: boolean; error?: string }> {
+  const cost = COSTS[operationType] || 0;
+  if (cost === 0) return { ok: true };
+  
+  const today = new Date().toISOString().split('T')[0];
+  
+  try {
+    const { data: profile } = await serviceClient
+      .from('profiles')
+      .select('daily_credits_used, last_reset_date')
+      .eq('id', userId)
+      .single();
+    
+    if (!profile) return { ok: true };
+    
+    let currentCreditsUsed = profile.daily_credits_used || 0;
+    if (profile.last_reset_date !== today) {
+      currentCreditsUsed = 0;
+      await serviceClient
+        .from('profiles')
+        .update({ daily_credits_used: 0, last_reset_date: today })
+        .eq('id', userId);
+    }
+    
+    if (currentCreditsUsed + cost > DAILY_CREDIT_LIMIT) {
+      return { 
+        ok: false, 
+        error: `Daily credit limit reached (${currentCreditsUsed}/${DAILY_CREDIT_LIMIT}). Add your own Gemini API key in Settings.`
+      };
+    }
+    
+    return { ok: true };
+  } catch (err) {
+    console.error('Error in credit check:', err);
+    return { ok: true };
+  }
+}
+
+// Deduct credits after successful operation
+async function deductCredits(serviceClient: any, userId: string, operationType: keyof typeof COSTS): Promise<void> {
+  const cost = COSTS[operationType] || 0;
+  if (cost === 0) return;
+  
+  const today = new Date().toISOString().split('T')[0];
+  
+  try {
+    const { data: profile } = await serviceClient
+      .from('profiles')
+      .select('daily_credits_used, last_reset_date')
+      .eq('id', userId)
+      .single();
+    
+    if (!profile) return;
+    
+    let currentCreditsUsed = profile.daily_credits_used || 0;
+    if (profile.last_reset_date !== today) {
+      currentCreditsUsed = 0;
+    }
+    
+    await serviceClient
+      .from('profiles')
+      .update({ daily_credits_used: currentCreditsUsed + cost, last_reset_date: today })
+      .eq('id', userId);
+    
+    console.log(`Deducted ${cost} credits for ${operationType}. New total: ${currentCreditsUsed + cost}/${DAILY_CREDIT_LIMIT}`);
+  } catch (err) {
+    console.error('Failed to deduct credits:', err);
+  }
+}
 
 // List of Gemini models in fallback order, prioritizing audio-capable models
 const GEMINI_MODELS_FALLBACK_ORDER = [
@@ -104,53 +226,64 @@ serve(async (req) => {
       // Continue without groups if there's an error, but log it.
     }
 
-    // 4. Retrieve and decrypt Gemini API key
-    // @ts-ignore
-    const appEncryptionKey = (Deno.env.get('app_encryption_key') as string);
-    if (!appEncryptionKey) {
-      return new Response(JSON.stringify({ error: 'Server configuration error: app_encryption_key not set.', code: 'SERVER_CONFIG_ERROR' }), {
-        status: 500,
+    // Service client for credit operations
+    const serviceClient = createClient(
+      Deno.env.get('SUPABASE_URL') ?? '',
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+    );
+
+    const appEncryptionKey = Deno.env.get('app_encryption_key');
+
+    // ============ HYBRID KEY PRIORITY SYSTEM ============
+    const headerApiKey = req.headers.get('x-gemini-api-key');
+    let geminiApiKey: string | null = null;
+    let isUserProvidedKey = false;
+    
+    if (headerApiKey) {
+      geminiApiKey = headerApiKey;
+      isUserProvidedKey = true;
+    } else {
+      const { data: userSecret } = await supabaseClient
+        .from('user_secrets')
+        .select('encrypted_value')
+        .eq('user_id', user.id)
+        .eq('secret_name', 'GEMINI_API_KEY')
+        .single();
+
+      if (userSecret && appEncryptionKey) {
+        const encoder = new TextEncoder();
+        const decoder = new TextDecoder();
+        const keyData = encoder.encode(appEncryptionKey);
+        const cryptoKey = await crypto.subtle.importKey("raw", keyData.slice(0, 32), { name: "AES-GCM" }, false, ["decrypt"]);
+        const encryptedBytes = Uint8Array.from(atob(userSecret.encrypted_value), c => c.charCodeAt(0));
+        const decryptedData = await crypto.subtle.decrypt({ name: "AES-GCM", iv: encryptedBytes.slice(0, 12) }, cryptoKey, encryptedBytes.slice(12));
+        geminiApiKey = decoder.decode(decryptedData);
+        isUserProvidedKey = true;
+      }
+    }
+    
+    if (!isUserProvidedKey) {
+      const dbApiKeys = await getActiveGeminiKeys(serviceClient);
+      if (dbApiKeys.length > 0) geminiApiKey = dbApiKeys[0].key_value;
+    }
+    
+    if (!geminiApiKey) {
+      return new Response(JSON.stringify({ error: 'No API key available. Please add your Gemini API key in Settings.', code: 'API_KEY_NOT_FOUND' }), {
+        status: 403,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    const { data: userSecret, error: secretError } = await supabaseClient
-      .from('user_secrets')
-      .select('encrypted_value')
-      .eq('user_id', user.id)
-      .eq('secret_name', 'GEMINI_API_KEY')
-      .single();
-
-    if (secretError || !userSecret) {
-      return new Response(JSON.stringify({ error: secretError?.message || 'Gemini API key not found for this user. Please set it in settings.', code: 'API_KEY_NOT_FOUND' }), {
-        status: 403, // Forbidden, as user needs to provide it
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
+    // Credit check for system pool users
+    if (!isUserProvidedKey) {
+      const creditCheck = await checkCredits(serviceClient, user.id, 'evaluate_speaking');
+      if (!creditCheck.ok) {
+        return new Response(JSON.stringify({ error: creditCheck.error, code: 'CREDIT_LIMIT_EXCEEDED' }), {
+          status: 403,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
     }
-
-    const encoder = new TextEncoder();
-    const decoder = new TextDecoder();
-    const keyData = encoder.encode(appEncryptionKey);
-    // @ts-ignore
-    const cryptoKey = await crypto.subtle.importKey(
-      "raw",
-      keyData.slice(0, 32),
-      { name: "AES-GCM" },
-      false,
-      ["decrypt"]
-    );
-
-    const encryptedBytes = Uint8Array.from(atob(userSecret.encrypted_value), c => c.charCodeAt(0));
-    const iv = encryptedBytes.slice(0, 12);
-    const ciphertext = encryptedBytes.slice(12);
-
-    // @ts-ignore
-    const decryptedData = await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv },
-      cryptoKey,
-      ciphertext
-    );
-    const geminiApiKey = decoder.decode(decryptedData);
 
     // 5. Construct Gemini API request parts with audio
     // Each item in 'contents' array must have a 'parts' array.

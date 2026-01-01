@@ -7,6 +7,139 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-gemini-api-key',
 };
 
+// ============================================================================
+// CREDIT SYSTEM - Cost Map and Daily Limits
+// ============================================================================
+const COSTS = {
+  // GENERATION
+  'generate_speaking': 5,
+  'generate_writing': 5,
+  'generate_listening': 20,
+  'generate_reading': 20,
+  // EVALUATION
+  'evaluate_speaking': 15,
+  'evaluate_writing': 10,
+  'evaluate_reading': 0,    // FREE
+  'evaluate_listening': 0,  // FREE
+  // CHAT
+  'explain_answer': 2
+};
+
+const DAILY_CREDIT_LIMIT = 100;
+
+// Check and deduct credits (returns null if OK, or error message if limit reached)
+async function checkAndDeductCredits(
+  serviceClient: any, 
+  userId: string, 
+  operationType: keyof typeof COSTS
+): Promise<{ ok: boolean; error?: string; creditsUsed?: number; creditsRemaining?: number }> {
+  const cost = COSTS[operationType] || 0;
+  
+  // Free operations always pass
+  if (cost === 0) {
+    return { ok: true, creditsUsed: 0, creditsRemaining: DAILY_CREDIT_LIMIT };
+  }
+  
+  const today = new Date().toISOString().split('T')[0];
+  
+  try {
+    // Fetch user profile
+    const { data: profile, error: profileError } = await serviceClient
+      .from('profiles')
+      .select('daily_credits_used, last_reset_date')
+      .eq('id', userId)
+      .single();
+    
+    if (profileError) {
+      console.error('Failed to fetch profile for credit check:', profileError);
+      // Allow operation if we can't check (fail open for now)
+      return { ok: true, creditsUsed: cost, creditsRemaining: DAILY_CREDIT_LIMIT };
+    }
+    
+    let currentCreditsUsed = profile.daily_credits_used || 0;
+    const lastResetDate = profile.last_reset_date;
+    
+    // Step 2: Reset if new day
+    if (lastResetDate !== today) {
+      console.log(`New day detected (${lastResetDate} -> ${today}), resetting credits`);
+      currentCreditsUsed = 0;
+      
+      await serviceClient
+        .from('profiles')
+        .update({ 
+          daily_credits_used: 0, 
+          last_reset_date: today 
+        })
+        .eq('id', userId);
+    }
+    
+    // Step 3: Check if limit would be exceeded
+    if (currentCreditsUsed + cost > DAILY_CREDIT_LIMIT) {
+      const remaining = Math.max(0, DAILY_CREDIT_LIMIT - currentCreditsUsed);
+      console.log(`Credit limit reached: ${currentCreditsUsed}/${DAILY_CREDIT_LIMIT}, cost: ${cost}`);
+      return { 
+        ok: false, 
+        error: `Daily credit limit reached (${currentCreditsUsed}/${DAILY_CREDIT_LIMIT}). Upgrade or add your own Gemini API key in Settings.`,
+        creditsUsed: currentCreditsUsed,
+        creditsRemaining: remaining
+      };
+    }
+    
+    // Step 4: Deduct credits (will be called after successful operation)
+    return { 
+      ok: true, 
+      creditsUsed: currentCreditsUsed, 
+      creditsRemaining: DAILY_CREDIT_LIMIT - currentCreditsUsed - cost 
+    };
+  } catch (err) {
+    console.error('Error in credit check:', err);
+    // Fail open - allow operation
+    return { ok: true, creditsUsed: 0, creditsRemaining: DAILY_CREDIT_LIMIT };
+  }
+}
+
+// Deduct credits after successful operation
+async function deductCredits(
+  serviceClient: any, 
+  userId: string, 
+  operationType: keyof typeof COSTS
+): Promise<void> {
+  const cost = COSTS[operationType] || 0;
+  if (cost === 0) return;
+  
+  const today = new Date().toISOString().split('T')[0];
+  
+  try {
+    // Get current credits used
+    const { data: profile } = await serviceClient
+      .from('profiles')
+      .select('daily_credits_used, last_reset_date')
+      .eq('id', userId)
+      .single();
+    
+    if (!profile) return;
+    
+    // Check if day changed (shouldn't happen but handle it)
+    let currentCreditsUsed = profile.daily_credits_used || 0;
+    if (profile.last_reset_date !== today) {
+      currentCreditsUsed = 0;
+    }
+    
+    // Increment credits used
+    await serviceClient
+      .from('profiles')
+      .update({ 
+        daily_credits_used: currentCreditsUsed + cost,
+        last_reset_date: today 
+      })
+      .eq('id', userId);
+    
+    console.log(`Deducted ${cost} credits for ${operationType}. New total: ${currentCreditsUsed + cost}/${DAILY_CREDIT_LIMIT}`);
+  } catch (err) {
+    console.error('Failed to deduct credits:', err);
+  }
+}
+
 // Decrypt user's Gemini API key
 async function decryptApiKey(encryptedValue: string, encryptionKey: string): Promise<string> {
   const encoder = new TextEncoder();
@@ -1651,6 +1784,35 @@ serve(async (req) => {
 
     console.log(`Key mode: ${isUserProvidedKey ? 'USER_KEY (no fallback)' : 'SYSTEM_POOL (rotation enabled)'}`);
 
+    // ============ CREDIT SYSTEM CHECK ============
+    // Step 1: If user has their own key (BYOK), skip all credit checks
+    // Step 2-4: Check and enforce credit limits for system pool users
+    const operationType = module === 'reading' ? 'generate_reading' 
+                        : module === 'listening' ? 'generate_listening'
+                        : module === 'writing' ? 'generate_writing'
+                        : module === 'speaking' ? 'generate_speaking'
+                        : 'generate_reading';
+    
+    if (!isUserProvidedKey) {
+      const creditCheck = await checkAndDeductCredits(serviceClient, user.id, operationType as keyof typeof COSTS);
+      
+      if (!creditCheck.ok) {
+        return new Response(JSON.stringify({ 
+          error: creditCheck.error,
+          errorType: 'CREDIT_LIMIT_EXCEEDED',
+          creditsUsed: creditCheck.creditsUsed,
+          creditsRemaining: creditCheck.creditsRemaining,
+          dailyLimit: DAILY_CREDIT_LIMIT
+        }), {
+          status: 403,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      
+      console.log(`Credit check passed: ${creditCheck.creditsUsed}/${DAILY_CREDIT_LIMIT} used, ${creditCheck.creditsRemaining} remaining`);
+    } else {
+      console.log('BYOK mode: Skipping credit check');
+    }
     
     const topic = topicPreference || IELTS_TOPICS[Math.floor(Math.random() * IELTS_TOPICS.length)];
     const testId = crypto.randomUUID();
@@ -1750,6 +1912,11 @@ serve(async (req) => {
       // Save to test bank if requested
       if (save_to_bank) {
         await saveToTestBank(serviceClient, 'reading', topic, responsePayload);
+      }
+
+      // Deduct credits on success (only for system pool users)
+      if (!isUserProvidedKey) {
+        await deductCredits(serviceClient, user.id, 'generate_reading');
       }
 
       return new Response(JSON.stringify(responsePayload), {
@@ -1863,6 +2030,11 @@ serve(async (req) => {
       // Save to test bank if requested
       if (save_to_bank) {
         await saveToTestBank(serviceClient, 'listening', topic, responsePayload);
+      }
+
+      // Deduct credits on success (only for system pool users)
+      if (!isUserProvidedKey) {
+        await deductCredits(serviceClient, user.id, 'generate_listening');
       }
 
       return new Response(JSON.stringify(responsePayload), {
@@ -2064,6 +2236,11 @@ Return this EXACT JSON structure:
           if (writingTotalTokensUsed > 0) {
             await updateQuotaTracking(serviceClient, user.id, writingTotalTokensUsed);
           }
+
+          // Deduct credits on success (only for system pool users)
+          if (!isUserProvidedKey) {
+            await deductCredits(serviceClient, user.id, 'generate_writing');
+          }
           
           return new Response(JSON.stringify({
             testId,
@@ -2090,6 +2267,11 @@ Return this EXACT JSON structure:
           // Update quota tracking
           if (writingTotalTokensUsed > 0) {
             await updateQuotaTracking(serviceClient, user.id, writingTotalTokensUsed);
+          }
+
+          // Deduct credits on success (only for system pool users)
+          if (!isUserProvidedKey) {
+            await deductCredits(serviceClient, user.id, 'generate_writing');
           }
           
           return new Response(JSON.stringify({
@@ -2242,6 +2424,11 @@ Generate realistic, ${difficulty}-level questions appropriate for IELTS. Make qu
           time_limit_seconds: p.time_limit_seconds || (partNumber === 1 || partNumber === 3 ? 300 : undefined),
         };
       });
+
+      // Deduct credits on success (only for system pool users)
+      if (!isUserProvidedKey) {
+        await deductCredits(serviceClient, user.id, 'generate_speaking');
+      }
 
       return new Response(JSON.stringify({
         testId,
