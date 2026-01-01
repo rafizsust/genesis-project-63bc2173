@@ -27,8 +27,13 @@ const COSTS = {
 
 const DAILY_CREDIT_LIMIT = 100;
 
-// Check and deduct credits (returns null if OK, or error message if limit reached)
-async function checkAndDeductCredits(
+// ============================================================================
+// ATOMIC CREDIT FUNCTIONS - Uses DB functions to prevent race conditions
+// ============================================================================
+
+// Check and RESERVE credits atomically BEFORE calling AI
+// This prevents the "rapid click attack" where parallel requests bypass limits
+async function checkAndReserveCredits(
   serviceClient: any, 
   userId: string, 
   operationType: keyof typeof COSTS
@@ -40,66 +45,44 @@ async function checkAndDeductCredits(
     return { ok: true, creditsUsed: 0, creditsRemaining: DAILY_CREDIT_LIMIT };
   }
   
-  const today = new Date().toISOString().split('T')[0];
-  
   try {
-    // Fetch user profile
-    const { data: profile, error: profileError } = await serviceClient
-      .from('profiles')
-      .select('daily_credits_used, last_reset_date')
-      .eq('id', userId)
-      .single();
+    // Call atomic DB function that locks the row and reserves credits
+    const { data, error } = await serviceClient.rpc('check_and_reserve_credits', {
+      p_user_id: userId,
+      p_cost: cost
+    });
     
-    if (profileError) {
-      console.error('Failed to fetch profile for credit check:', profileError);
-      // Allow operation if we can't check (fail open for now)
-      return { ok: true, creditsUsed: cost, creditsRemaining: DAILY_CREDIT_LIMIT };
+    if (error) {
+      console.error('check_and_reserve_credits RPC error:', error);
+      // Fail open - allow operation if RPC fails
+      return { ok: true, creditsUsed: 0, creditsRemaining: DAILY_CREDIT_LIMIT };
     }
     
-    let currentCreditsUsed = profile.daily_credits_used || 0;
-    const lastResetDate = profile.last_reset_date;
+    console.log(`Credit check result for ${operationType} (cost ${cost}):`, data);
     
-    // Step 2: Reset if new day
-    if (lastResetDate !== today) {
-      console.log(`New day detected (${lastResetDate} -> ${today}), resetting credits`);
-      currentCreditsUsed = 0;
-      
-      await serviceClient
-        .from('profiles')
-        .update({ 
-          daily_credits_used: 0, 
-          last_reset_date: today 
-        })
-        .eq('id', userId);
-    }
-    
-    // Step 3: Check if limit would be exceeded
-    if (currentCreditsUsed + cost > DAILY_CREDIT_LIMIT) {
-      const remaining = Math.max(0, DAILY_CREDIT_LIMIT - currentCreditsUsed);
-      console.log(`Credit limit reached: ${currentCreditsUsed}/${DAILY_CREDIT_LIMIT}, cost: ${cost}`);
-      return { 
-        ok: false, 
-        error: `Daily credit limit reached (${currentCreditsUsed}/${DAILY_CREDIT_LIMIT}). Upgrade or add your own Gemini API key in Settings.`,
-        creditsUsed: currentCreditsUsed,
-        creditsRemaining: remaining
+    if (!data.ok) {
+      return {
+        ok: false,
+        error: data.error || `Daily credit limit reached. Add your own Gemini API key in Settings.`,
+        creditsUsed: data.credits_used,
+        creditsRemaining: data.credits_remaining
       };
     }
     
-    // Step 4: Deduct credits (will be called after successful operation)
-    return { 
-      ok: true, 
-      creditsUsed: currentCreditsUsed, 
-      creditsRemaining: DAILY_CREDIT_LIMIT - currentCreditsUsed - cost 
+    return {
+      ok: true,
+      creditsUsed: data.credits_used,
+      creditsRemaining: data.credits_remaining
     };
   } catch (err) {
-    console.error('Error in credit check:', err);
+    console.error('Error in atomic credit check:', err);
     // Fail open - allow operation
     return { ok: true, creditsUsed: 0, creditsRemaining: DAILY_CREDIT_LIMIT };
   }
 }
 
-// Deduct credits after successful operation
-async function deductCredits(
+// Refund credits if the AI operation fails AFTER we reserved them
+async function refundCredits(
   serviceClient: any, 
   userId: string, 
   operationType: keyof typeof COSTS
@@ -107,36 +90,19 @@ async function deductCredits(
   const cost = COSTS[operationType] || 0;
   if (cost === 0) return;
   
-  const today = new Date().toISOString().split('T')[0];
-  
   try {
-    // Get current credits used
-    const { data: profile } = await serviceClient
-      .from('profiles')
-      .select('daily_credits_used, last_reset_date')
-      .eq('id', userId)
-      .single();
+    const { error } = await serviceClient.rpc('refund_credits', {
+      p_user_id: userId,
+      p_cost: cost
+    });
     
-    if (!profile) return;
-    
-    // Check if day changed (shouldn't happen but handle it)
-    let currentCreditsUsed = profile.daily_credits_used || 0;
-    if (profile.last_reset_date !== today) {
-      currentCreditsUsed = 0;
+    if (error) {
+      console.error('refund_credits RPC error:', error);
+    } else {
+      console.log(`Refunded ${cost} credits for failed ${operationType}`);
     }
-    
-    // Increment credits used
-    await serviceClient
-      .from('profiles')
-      .update({ 
-        daily_credits_used: currentCreditsUsed + cost,
-        last_reset_date: today 
-      })
-      .eq('id', userId);
-    
-    console.log(`Deducted ${cost} credits for ${operationType}. New total: ${currentCreditsUsed + cost}/${DAILY_CREDIT_LIMIT}`);
   } catch (err) {
-    console.error('Failed to deduct credits:', err);
+    console.error('Failed to refund credits:', err);
   }
 }
 
@@ -1794,7 +1760,7 @@ serve(async (req) => {
                         : 'generate_reading';
     
     if (!isUserProvidedKey) {
-      const creditCheck = await checkAndDeductCredits(serviceClient, user.id, operationType as keyof typeof COSTS);
+      const creditCheck = await checkAndReserveCredits(serviceClient, user.id, operationType as keyof typeof COSTS);
       
       if (!creditCheck.ok) {
         return new Response(JSON.stringify({ 
@@ -1809,10 +1775,14 @@ serve(async (req) => {
         });
       }
       
-      console.log(`Credit check passed: ${creditCheck.creditsUsed}/${DAILY_CREDIT_LIMIT} used, ${creditCheck.creditsRemaining} remaining`);
+      console.log(`Credits reserved: ${creditCheck.creditsUsed}/${DAILY_CREDIT_LIMIT} used, ${creditCheck.creditsRemaining} remaining after this operation`);
     } else {
       console.log('BYOK mode: Skipping credit check');
     }
+    
+    // Track if we need to refund on error (only if credits were reserved)
+    const creditsReserved = !isUserProvidedKey;
+    const currentOperationType = operationType as keyof typeof COSTS;
     
     const topic = topicPreference || IELTS_TOPICS[Math.floor(Math.random() * IELTS_TOPICS.length)];
     const testId = crypto.randomUUID();
@@ -1839,6 +1809,10 @@ serve(async (req) => {
       let totalTokensUsed = getLastTokensUsed();
       
       if (!result) {
+        // Refund credits on AI failure
+        if (creditsReserved) {
+          await refundCredits(serviceClient, user.id, currentOperationType);
+        }
         if (wasQuotaExceeded()) {
           return new Response(JSON.stringify({ 
             error: getLastGeminiError(),
@@ -1862,6 +1836,10 @@ serve(async (req) => {
         parsed = JSON.parse(jsonStr);
       } catch (e) {
         console.error("Failed to parse Gemini response:", e);
+        // Refund credits on parse failure
+        if (creditsReserved) {
+          await refundCredits(serviceClient, user.id, currentOperationType);
+        }
         return new Response(JSON.stringify({ error: 'Failed to parse generated content.' }), {
           status: 500,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -1914,10 +1892,7 @@ serve(async (req) => {
         await saveToTestBank(serviceClient, 'reading', topic, responsePayload);
       }
 
-      // Deduct credits on success (only for system pool users)
-      if (!isUserProvidedKey) {
-        await deductCredits(serviceClient, user.id, 'generate_reading');
-      }
+      // Credits already reserved atomically before AI call - no deduction needed
 
       return new Response(JSON.stringify(responsePayload), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -1931,6 +1906,10 @@ serve(async (req) => {
       let totalTokensUsed = getLastTokensUsed();
       
       if (!result) {
+        // Refund credits on AI failure
+        if (creditsReserved) {
+          await refundCredits(serviceClient, user.id, currentOperationType);
+        }
         if (wasQuotaExceeded()) {
           return new Response(JSON.stringify({ 
             error: getLastGeminiError(),
@@ -1952,6 +1931,10 @@ serve(async (req) => {
         parsed = JSON.parse(jsonStr);
       } catch (e) {
         console.error("Failed to parse listening response:", e);
+        // Refund credits on parse failure
+        if (creditsReserved) {
+          await refundCredits(serviceClient, user.id, currentOperationType);
+        }
         return new Response(JSON.stringify({ error: 'Failed to parse generated content.' }), {
           status: 500,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -2032,10 +2015,7 @@ serve(async (req) => {
         await saveToTestBank(serviceClient, 'listening', topic, responsePayload);
       }
 
-      // Deduct credits on success (only for system pool users)
-      if (!isUserProvidedKey) {
-        await deductCredits(serviceClient, user.id, 'generate_listening');
-      }
+      // Credits already reserved atomically before AI call - no deduction needed
 
       return new Response(JSON.stringify(responsePayload), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -2237,10 +2217,7 @@ Return this EXACT JSON structure:
             await updateQuotaTracking(serviceClient, user.id, writingTotalTokensUsed);
           }
 
-          // Deduct credits on success (only for system pool users)
-          if (!isUserProvidedKey) {
-            await deductCredits(serviceClient, user.id, 'generate_writing');
-          }
+          // Credits already reserved atomically before AI call - no deduction needed
           
           return new Response(JSON.stringify({
             testId,
@@ -2269,10 +2246,7 @@ Return this EXACT JSON structure:
             await updateQuotaTracking(serviceClient, user.id, writingTotalTokensUsed);
           }
 
-          // Deduct credits on success (only for system pool users)
-          if (!isUserProvidedKey) {
-            await deductCredits(serviceClient, user.id, 'generate_writing');
-          }
+          // Credits already reserved atomically before AI call - no deduction needed
           
           return new Response(JSON.stringify({
             testId,
@@ -2425,10 +2399,7 @@ Generate realistic, ${difficulty}-level questions appropriate for IELTS. Make qu
         };
       });
 
-      // Deduct credits on success (only for system pool users)
-      if (!isUserProvidedKey) {
-        await deductCredits(serviceClient, user.id, 'generate_speaking');
-      }
+      // Credits already reserved atomically before AI call - no deduction needed
 
       return new Response(JSON.stringify({
         testId,

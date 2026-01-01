@@ -676,7 +676,7 @@ function TableRenderer({ data }: { data: IELTSChartData }) {
   );
 }
 
-// Process Diagram Renderer - IELTS-style horizontal flow chart with arrows
+// Process Diagram Renderer - IELTS-style pictorial flow with illustrations
 function ProcessDiagramRenderer({ data }: { data: IELTSChartData }) {
   const steps = (data.steps || []).filter((s) => s?.label);
 
@@ -688,26 +688,126 @@ function ProcessDiagramRenderer({ data }: { data: IELTSChartData }) {
     );
   }
 
-  // For process diagrams, use a horizontal flow layout like real IELTS
-  // with boxes connected by arrows
+  // IELTS-style pictorial process diagram - more like real exam ss6
   const W = 800;
-  const boxH = 60;
-  const boxW = 140;
-  const arrowW = 40;
-  const rowGap = 80;
+  const H = Math.max(400, Math.ceil(steps.length / 3) * 180 + 80);
   
-  // Calculate how many boxes fit per row
-  const boxesPerRow = Math.min(4, steps.length);
-  const rowCount = Math.ceil(steps.length / boxesPerRow);
-  const H = rowCount * (boxH + rowGap) + 60;
+  // Icons/illustrations for common process elements
+  const getProcessIcon = (label: string, idx: number) => {
+    const labelLower = label.toLowerCase();
+    
+    // Return SVG elements based on keyword matching
+    if (labelLower.includes('dig') || labelLower.includes('excavat') || labelLower.includes('extract')) {
+      return (
+        <g>
+          <rect x="-20" y="-10" width="40" height="25" fill="#8B7355" rx="2" />
+          <path d="M-15,-8 L15,-8 L12,10 L-12,10 Z" fill="#654321" />
+          <circle cx="0" cy="-15" r="8" fill="#FFD700" stroke="#333" strokeWidth="1" />
+        </g>
+      );
+    }
+    if (labelLower.includes('mix') || labelLower.includes('blend') || labelLower.includes('combine')) {
+      return (
+        <g>
+          <ellipse cx="0" cy="5" rx="22" ry="12" fill="#A0A0A0" stroke="#333" strokeWidth="1.5" />
+          <path d="M-18,-2 Q0,-15 18,-2" stroke="#333" strokeWidth="2" fill="none" />
+          <line x1="0" y1="-10" x2="0" y2="5" stroke="#333" strokeWidth="2" />
+        </g>
+      );
+    }
+    if (labelLower.includes('heat') || labelLower.includes('kiln') || labelLower.includes('fire') || labelLower.includes('oven') || labelLower.includes('dry')) {
+      return (
+        <g>
+          <rect x="-25" y="-5" width="50" height="30" fill="#B22222" rx="3" />
+          <rect x="-20" y="0" width="40" height="20" fill="#FF4500" rx="2" />
+          <path d="M-10,8 Q-8,0 -6,8 M0,8 Q2,0 4,8 M10,8 Q12,0 14,8" stroke="#FFD700" strokeWidth="2" fill="none" />
+        </g>
+      );
+    }
+    if (labelLower.includes('mould') || labelLower.includes('mold') || labelLower.includes('shape') || labelLower.includes('form')) {
+      return (
+        <g>
+          <rect x="-22" y="-8" width="44" height="20" fill="#696969" rx="2" />
+          <rect x="-18" y="-4" width="36" height="12" fill="#4A4A4A" rx="1" />
+          <rect x="-12" y="-1" width="24" height="6" fill="#8B4513" rx="1" />
+        </g>
+      );
+    }
+    if (labelLower.includes('cool') || labelLower.includes('chill')) {
+      return (
+        <g>
+          <rect x="-20" y="-10" width="40" height="25" fill="#ADD8E6" rx="3" stroke="#333" strokeWidth="1" />
+          <path d="M-8,-5 L-8,10 M0,-5 L0,10 M8,-5 L8,10" stroke="#4169E1" strokeWidth="2" strokeDasharray="3,2" />
+        </g>
+      );
+    }
+    if (labelLower.includes('pack') || labelLower.includes('box') || labelLower.includes('wrap')) {
+      return (
+        <g>
+          <rect x="-18" y="-12" width="36" height="28" fill="#DEB887" stroke="#333" strokeWidth="1.5" />
+          <line x1="-18" y1="0" x2="18" y2="0" stroke="#8B4513" strokeWidth="1.5" />
+          <line x1="0" y1="-12" x2="0" y2="16" stroke="#8B4513" strokeWidth="1.5" />
+        </g>
+      );
+    }
+    if (labelLower.includes('transport') || labelLower.includes('deliver') || labelLower.includes('ship') || labelLower.includes('truck')) {
+      return (
+        <g>
+          <rect x="-25" y="-5" width="35" height="18" fill="#4169E1" rx="2" />
+          <rect x="10" y="-8" width="15" height="21" fill="#4169E1" rx="1" />
+          <circle cx="-15" cy="15" r="5" fill="#333" />
+          <circle cx="5" cy="15" r="5" fill="#333" />
+          <circle cx="18" cy="15" r="5" fill="#333" />
+        </g>
+      );
+    }
+    if (labelLower.includes('cut') || labelLower.includes('slice') || labelLower.includes('wire')) {
+      return (
+        <g>
+          <rect x="-20" y="-5" width="40" height="15" fill="#8B4513" rx="1" />
+          <line x1="-25" y1="0" x2="25" y2="0" stroke="#C0C0C0" strokeWidth="2" />
+          <path d="M20,-10 L25,0 L20,10" stroke="#C0C0C0" strokeWidth="2" fill="none" />
+        </g>
+      );
+    }
+    if (labelLower.includes('store') || labelLower.includes('warehouse') || labelLower.includes('stack')) {
+      return (
+        <g>
+          <rect x="-22" y="-15" width="44" height="35" fill="#A9A9A9" rx="2" stroke="#333" strokeWidth="1" />
+          <line x1="-22" y1="-5" x2="22" y2="-5" stroke="#333" strokeWidth="1" />
+          <line x1="-22" y1="5" x2="22" y2="5" stroke="#333" strokeWidth="1" />
+          <line x1="0" y1="-15" x2="0" y2="20" stroke="#333" strokeWidth="1" />
+        </g>
+      );
+    }
+    if (labelLower.includes('water') || labelLower.includes('add water') || labelLower.includes('liquid')) {
+      return (
+        <g>
+          <path d="M0,-15 Q-12,0 0,12 Q12,0 0,-15" fill="#4169E1" stroke="#333" strokeWidth="1" />
+          <path d="M-5,2 Q0,-2 5,2" stroke="#ADD8E6" strokeWidth="2" fill="none" />
+        </g>
+      );
+    }
+    
+    // Default: generic process box with step number
+    return (
+      <g>
+        <rect x="-25" y="-15" width="50" height="35" fill="#f0f0f0" stroke="#333" strokeWidth="2" rx="4" />
+        <text y="5" textAnchor="middle" fontSize="16" fontWeight="bold" fill="#333">{idx + 1}</text>
+      </g>
+    );
+  };
+
+  // Calculate positions in a flow pattern
+  const itemsPerRow = Math.min(4, steps.length);
   
-  const getBoxPosition = (idx: number) => {
-    const row = Math.floor(idx / boxesPerRow);
-    const col = idx % boxesPerRow;
-    // Alternate direction for snake pattern
-    const actualCol = row % 2 === 0 ? col : (boxesPerRow - 1 - col);
-    const x = 50 + actualCol * (boxW + arrowW);
-    const y = 40 + row * (boxH + rowGap);
+  const getPosition = (idx: number) => {
+    const row = Math.floor(idx / itemsPerRow);
+    const col = idx % itemsPerRow;
+    // Snake pattern: alternate row direction
+    const actualCol = row % 2 === 0 ? col : (itemsPerRow - 1 - col);
+    const x = 100 + actualCol * 170;
+    const y = 80 + row * 150;
     return { x, y, row, col: actualCol };
   };
 
@@ -722,73 +822,51 @@ function ProcessDiagramRenderer({ data }: { data: IELTSChartData }) {
       >
         <defs>
           <marker
-            id="process-arrow"
-            markerWidth="10"
-            markerHeight="10"
-            refX="9"
-            refY="5"
+            id="process-arrow-head"
+            markerWidth="12"
+            markerHeight="8"
+            refX="10"
+            refY="4"
             orient="auto"
             markerUnits="strokeWidth"
           >
-            <path d="M0,0 L0,10 L10,5 z" fill="#666" />
+            <path d="M0,0 L0,8 L12,4 z" fill="#555" />
           </marker>
         </defs>
 
         {steps.map((step, idx) => {
-          const pos = getBoxPosition(idx);
-          const nextPos = idx < steps.length - 1 ? getBoxPosition(idx + 1) : null;
+          const pos = getPosition(idx);
+          const nextPos = idx < steps.length - 1 ? getPosition(idx + 1) : null;
 
           return (
             <g key={idx}>
-              {/* Box */}
-              <rect
-                x={pos.x}
-                y={pos.y}
-                width={boxW}
-                height={boxH}
-                rx={8}
-                fill="#f8f9fa"
-                stroke="#333"
-                strokeWidth={2}
-              />
-              
-              {/* Step number circle */}
-              <circle
-                cx={pos.x + 20}
-                cy={pos.y + boxH / 2}
-                r={14}
-                fill="#3366CC"
-              />
-              <text
-                x={pos.x + 20}
-                y={pos.y + boxH / 2 + 5}
-                textAnchor="middle"
-                fontSize={12}
-                fontWeight={700}
-                fill="#fff"
-              >
-                {idx + 1}
-              </text>
+              {/* Process illustration */}
+              <g transform={`translate(${pos.x}, ${pos.y})`}>
+                {getProcessIcon(step.label, idx)}
+              </g>
 
-              {/* Step label - wrap text */}
+              {/* Step label below icon */}
               <foreignObject
-                x={pos.x + 38}
-                y={pos.y + 8}
-                width={boxW - 48}
-                height={boxH - 16}
+                x={pos.x - 60}
+                y={pos.y + 30}
+                width={120}
+                height={60}
               >
                 <div 
                   style={{ 
-                    fontSize: '11px', 
+                    fontSize: '10px', 
                     lineHeight: '1.2',
                     color: '#333',
-                    display: 'flex',
-                    alignItems: 'center',
-                    height: '100%',
+                    textAlign: 'center',
                     fontWeight: 500,
                   }}
                 >
                   {step.label}
+                  {step.description && (
+                    <div style={{ fontSize: '8px', color: '#666', marginTop: '2px' }}>
+                      {step.description}
+                    </div>
+                  )}
                 </div>
               </foreignObject>
 
@@ -798,25 +876,23 @@ function ProcessDiagramRenderer({ data }: { data: IELTSChartData }) {
                   {pos.row === nextPos.row ? (
                     // Horizontal arrow (same row)
                     <line
-                      x1={pos.x + boxW + 4}
-                      y1={pos.y + boxH / 2}
-                      x2={nextPos.x - 4}
-                      y2={nextPos.y + boxH / 2}
-                      stroke="#666"
-                      strokeWidth={2}
-                      markerEnd="url(#process-arrow)"
+                      x1={pos.x + 35}
+                      y1={pos.y}
+                      x2={nextPos.x - 35}
+                      y2={nextPos.y}
+                      stroke="#555"
+                      strokeWidth={2.5}
+                      markerEnd="url(#process-arrow-head)"
                     />
                   ) : (
-                    // Vertical arrow (different row) + connecting path
+                    // Curved arrow to next row
                     <path
-                      d={`M ${pos.x + boxW / 2} ${pos.y + boxH + 4} 
-                          L ${pos.x + boxW / 2} ${nextPos.y - 20}
-                          L ${nextPos.x + boxW / 2} ${nextPos.y - 20}
-                          L ${nextPos.x + boxW / 2} ${nextPos.y - 4}`}
+                      d={`M ${pos.x} ${pos.y + 25} 
+                          C ${pos.x} ${pos.y + 70}, ${nextPos.x} ${nextPos.y - 70}, ${nextPos.x} ${nextPos.y - 25}`}
                       fill="none"
-                      stroke="#666"
-                      strokeWidth={2}
-                      markerEnd="url(#process-arrow)"
+                      stroke="#555"
+                      strokeWidth={2.5}
+                      markerEnd="url(#process-arrow-head)"
                     />
                   )}
                 </>
@@ -825,25 +901,6 @@ function ProcessDiagramRenderer({ data }: { data: IELTSChartData }) {
           );
         })}
       </svg>
-
-      {/* Step descriptions below if any */}
-      {steps.some(s => s.description) && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-4">
-          {steps.filter(s => s.description).map((step, idx) => (
-            <div key={idx} className="bg-muted/20 border border-border rounded px-3 py-2">
-              <div className="flex items-start gap-2">
-                <span className="text-xs font-bold text-primary bg-primary/10 px-2 py-0.5 rounded mt-0.5">
-                  {steps.indexOf(step) + 1}
-                </span>
-                <div>
-                  <span className="text-sm font-medium text-foreground">{step.label}</span>
-                  <p className="text-xs text-muted-foreground mt-0.5">{step.description}</p>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
     </div>
   );
 }

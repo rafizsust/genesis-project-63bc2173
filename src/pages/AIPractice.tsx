@@ -13,6 +13,7 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { AILoadingScreen } from '@/components/common/AILoadingScreen';
 import { GeminiQuotaDisplay } from '@/components/common/GeminiQuotaDisplay';
+import { CreditDisplay } from '@/components/common/CreditDisplay';
 import { useToast } from '@/hooks/use-toast';
 import { describeApiError } from '@/lib/apiErrors';
 import { useAuth } from '@/hooks/useAuth';
@@ -679,9 +680,12 @@ export default function AIPractice() {
             </div>
           </div>
 
-          {/* History Link and Quota Display */}
-          <div className="flex justify-between items-center mb-4">
-            <GeminiQuotaDisplay compact />
+          {/* History Link, Credit Display, and Quota Display */}
+          <div className="flex justify-between items-center mb-4 gap-2 flex-wrap">
+            <div className="flex items-center gap-3">
+              <CreditDisplay compact />
+              <GeminiQuotaDisplay compact />
+            </div>
             <Link to="/ai-practice/history">
               <Button variant="outline" size="sm">
                 <Clock className="w-4 h-4 mr-2" />
