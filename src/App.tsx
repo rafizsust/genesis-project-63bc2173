@@ -53,6 +53,7 @@ import SpeakingTestsAdmin from "./pages/admin/SpeakingTestsAdmin";
 import SpeakingTestEditor from "./pages/admin/SpeakingTestEditor";
 import AdminSettings from "./pages/admin/AdminSettings";
 import TestBankAdmin from "./pages/admin/TestBankAdmin";
+import TestFactoryAdmin from "./pages/admin/TestFactoryAdmin";
 
 
 const queryClient = new QueryClient({
@@ -138,6 +139,8 @@ const App = () => (
               <Route path="speaking/edit/:testId" element={<SpeakingTestEditor />} />
               <Route path="promotions" element={<PromotionCodesAdmin />} />
               <Route path="testbank" element={<TestBankAdmin />} />
+              <Route path="test-factory" element={<TestFactoryAdmin />} />
+              <Route path="settings" element={<AdminSettings />} />
               <Route path="settings" element={<AdminSettings />} />
             </Route>
             

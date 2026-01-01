@@ -32,8 +32,24 @@ const EDGE_TTS_VOICES = {
 
 const ALL_ACCENTS = Object.keys(EDGE_TTS_VOICES) as Array<keyof typeof EDGE_TTS_VOICES>;
 
-function getRandomVoice(): { voiceId: string; accent: string } {
-  const accent = ALL_ACCENTS[Math.floor(Math.random() * ALL_ACCENTS.length)];
+function getRandomVoice(preferredAccent?: string): { voiceId: string; accent: string } {
+  let accent: keyof typeof EDGE_TTS_VOICES;
+  
+  if (preferredAccent && preferredAccent !== "random" && preferredAccent !== "mixed" && EDGE_TTS_VOICES[preferredAccent as keyof typeof EDGE_TTS_VOICES]) {
+    accent = preferredAccent as keyof typeof EDGE_TTS_VOICES;
+  } else {
+    accent = ALL_ACCENTS[Math.floor(Math.random() * ALL_ACCENTS.length)];
+  }
+  
+  const voices = EDGE_TTS_VOICES[accent];
+  const voiceId = voices[Math.floor(Math.random() * voices.length)];
+  return { voiceId, accent };
+}
+
+function getVoiceForMixedAccent(index: number, quantity: number): { voiceId: string; accent: string } {
+  // Distribute accents evenly across tests
+  const accentIndex = index % ALL_ACCENTS.length;
+  const accent = ALL_ACCENTS[accentIndex];
   const voices = EDGE_TTS_VOICES[accent];
   const voiceId = voices[Math.floor(Math.random() * voices.length)];
   return { voiceId, accent };
@@ -82,7 +98,7 @@ serve(async (req) => {
       });
     }
 
-    const { module, topic, difficulty, quantity } = await req.json();
+    const { module, topic, difficulty, quantity, accent } = await req.json();
 
     // Validate inputs
     if (!module || !topic || !difficulty || !quantity) {
@@ -136,7 +152,7 @@ serve(async (req) => {
     }
 
     // Start background processing (fire and forget)
-    processGenerationJob(supabase, job.id, module, topic, difficulty, quantity).catch(console.error);
+    processGenerationJob(supabase, job.id, module, topic, difficulty, quantity, accent).catch(console.error);
 
     return new Response(
       JSON.stringify({
@@ -161,7 +177,8 @@ async function processGenerationJob(
   module: string,
   topic: string,
   difficulty: string,
-  quantity: number
+  quantity: number,
+  accentPreference?: string
 ) {
   console.log(`[Job ${jobId}] Starting generation of ${quantity} ${module} tests`);
 
@@ -179,7 +196,10 @@ async function processGenerationJob(
     try {
       console.log(`[Job ${jobId}] Processing test ${i + 1}/${quantity}`);
       
-      const { voiceId, accent } = getRandomVoice();
+      // Get voice based on accent preference
+      const { voiceId, accent } = accentPreference === "mixed" 
+        ? getVoiceForMixedAccent(i, quantity)
+        : getRandomVoice(accentPreference);
       
       // Generate content based on module
       const content = await generateContent(module, topic, difficulty);

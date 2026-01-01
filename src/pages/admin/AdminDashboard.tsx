@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { BookOpen, FileText, TrendingUp, Headphones, PenTool, Mic, Brain, Sparkles } from 'lucide-react';
+import { BookOpen, FileText, TrendingUp, Headphones, PenTool, Mic, Brain, Sparkles, Factory } from 'lucide-react';
 
 interface Stats {
   readingTests: number;
@@ -139,6 +139,11 @@ export default function AdminDashboard() {
             <Link to="/admin/speaking" className="p-4 rounded-xl border bg-card hover:bg-muted/50 transition-colors text-center group">
               <Mic className="w-8 h-8 mx-auto mb-2 text-orange-500 group-hover:scale-110 transition-transform" />
               <p className="font-medium text-sm">Manage Speaking</p>
+            </Link>
+            <Link to="/admin/test-factory" className="p-4 rounded-xl border bg-card hover:bg-muted/50 transition-colors text-center group col-span-2 md:col-span-4 bg-gradient-to-r from-primary/5 to-accent/5">
+              <Factory className="w-8 h-8 mx-auto mb-2 text-primary group-hover:scale-110 transition-transform" />
+              <p className="font-medium text-sm">Test Factory</p>
+              <p className="text-xs text-muted-foreground mt-1">Bulk generate tests with audio</p>
             </Link>
           </div>
         </CardContent>

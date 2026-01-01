@@ -62,6 +62,15 @@ const DIFFICULTIES = [
   { value: "hard", label: "Hard (Band 7-9)" },
 ];
 
+const ACCENTS = [
+  { value: "random", label: "Random (Variety)" },
+  { value: "US", label: "American (US)" },
+  { value: "GB", label: "British (UK)" },
+  { value: "AU", label: "Australian" },
+  { value: "IN", label: "Indian" },
+  { value: "mixed", label: "Mixed (All accents)" },
+];
+
 const TOPICS = {
   listening: ["Travel", "Education", "Environment", "Technology", "Health", "Culture", "Business", "Science"],
   speaking: ["Family", "Work", "Hobbies", "Travel", "Education", "Technology", "Environment", "Food"],
@@ -77,6 +86,7 @@ export default function TestFactoryAdmin() {
   const [topic, setTopic] = useState<string>("");
   const [customTopic, setCustomTopic] = useState<string>("");
   const [difficulty, setDifficulty] = useState<string>("medium");
+  const [accent, setAccent] = useState<string>("random");
   const [quantity, setQuantity] = useState<number>(5);
   const [isGenerating, setIsGenerating] = useState(false);
 
@@ -201,6 +211,7 @@ export default function TestFactoryAdmin() {
             topic: finalTopic,
             difficulty,
             quantity,
+            accent: (module === "listening" || module === "speaking") ? accent : undefined,
           }),
         }
       );
@@ -374,6 +385,30 @@ export default function TestFactoryAdmin() {
                   </SelectContent>
                 </Select>
               </div>
+
+              {/* Accent Selection (only for listening/speaking) */}
+              {(module === "listening" || module === "speaking") && (
+                <div className="space-y-2">
+                  <Label>Accent Variety</Label>
+                  <Select value={accent} onValueChange={setAccent}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {ACCENTS.map((a) => (
+                        <SelectItem key={a.value} value={a.value}>
+                          {a.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    {accent === "random" && "Each test gets a random accent"}
+                    {accent === "mixed" && "Distribute all accents evenly across tests"}
+                    {accent !== "random" && accent !== "mixed" && `All tests will use ${accent} accent`}
+                  </p>
+                </div>
+              )}
 
               {/* Quantity Slider */}
               <div className="space-y-4">
