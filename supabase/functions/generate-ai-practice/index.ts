@@ -80,6 +80,88 @@ let lastGeminiError: string | null = null;
 let lastTokensUsed: number = 0;
 let isQuotaExceeded: boolean = false;
 
+// DB-managed API key interface
+interface ApiKeyRecord {
+  id: string;
+  provider: string;
+  key_value: string;
+  is_active: boolean;
+  error_count: number;
+}
+
+// Fetch active Gemini keys from api_keys table with rotation support
+async function getActiveGeminiKeys(supabaseServiceClient: any): Promise<ApiKeyRecord[]> {
+  try {
+    const { data, error } = await supabaseServiceClient
+      .from('api_keys')
+      .select('id, provider, key_value, is_active, error_count')
+      .eq('provider', 'gemini')
+      .eq('is_active', true)
+      .order('error_count', { ascending: true }); // Prioritize keys with fewer errors
+    
+    if (error) {
+      console.error('Failed to fetch API keys:', error);
+      return [];
+    }
+    
+    console.log(`Found ${data?.length || 0} active Gemini keys in api_keys table`);
+    return data || [];
+  } catch (err) {
+    console.error('Error fetching API keys:', err);
+    return [];
+  }
+}
+
+// Increment error count for a failed key
+async function incrementKeyErrorCount(supabaseServiceClient: any, keyId: string, deactivate: boolean = false): Promise<void> {
+  try {
+    const update: any = { 
+      error_count: deactivate ? 999 : undefined,
+      is_active: deactivate ? false : undefined,
+    };
+    
+    // Use raw increment if not deactivating
+    if (!deactivate) {
+      const { data: currentKey } = await supabaseServiceClient
+        .from('api_keys')
+        .select('error_count')
+        .eq('id', keyId)
+        .single();
+      
+      if (currentKey) {
+        await supabaseServiceClient
+          .from('api_keys')
+          .update({ 
+            error_count: (currentKey.error_count || 0) + 1,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', keyId);
+      }
+    } else {
+      await supabaseServiceClient
+        .from('api_keys')
+        .update({ is_active: false, updated_at: new Date().toISOString() })
+        .eq('id', keyId);
+    }
+    
+    console.log(`Updated key ${keyId}: ${deactivate ? 'deactivated' : 'incremented error count'}`);
+  } catch (err) {
+    console.error('Failed to update key error count:', err);
+  }
+}
+
+// Reset error count on successful use
+async function resetKeyErrorCount(supabaseServiceClient: any, keyId: string): Promise<void> {
+  try {
+    await supabaseServiceClient
+      .from('api_keys')
+      .update({ error_count: 0, updated_at: new Date().toISOString() })
+      .eq('id', keyId);
+  } catch (err) {
+    console.error('Failed to reset key error count:', err);
+  }
+}
+
 // Pre-flight validation: Check API key validity without consuming generation quota
 // Uses a lightweight models/list call instead of a generation request
 async function preflightApiCheck(apiKey: string, skipPreflight: boolean = false): Promise<{ ok: boolean; error?: string }> {
@@ -194,10 +276,34 @@ async function sleep(ms: number): Promise<void> {
   await new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function callGemini(apiKey: string, prompt: string, maxRetries: number = 2): Promise<string | null> {
+// Enhanced callGemini with DB key rotation support
+// If dbKeys array is provided, will rotate through them on 429/403 errors
+async function callGemini(
+  apiKey: string, 
+  prompt: string, 
+  maxRetries: number = 2,
+  options?: {
+    dbKeys?: ApiKeyRecord[];
+    serviceClient?: any;
+    currentKeyIndex?: number;
+  }
+): Promise<string | null> {
   lastGeminiError = null;
   lastTokensUsed = 0;
   isQuotaExceeded = false;
+  
+  const dbKeys = options?.dbKeys || [];
+  const serviceClient = options?.serviceClient;
+  let currentKeyIndex = options?.currentKeyIndex || 0;
+  let currentApiKey = apiKey;
+  let currentKeyRecord: ApiKeyRecord | null = null;
+  
+  // If we have DB keys, use the first one
+  if (dbKeys.length > 0 && currentKeyIndex < dbKeys.length) {
+    currentKeyRecord = dbKeys[currentKeyIndex];
+    currentApiKey = currentKeyRecord.key_value;
+    console.log(`Using DB-managed key ${currentKeyIndex + 1}/${dbKeys.length}`);
+  }
   
   for (const model of GEMINI_MODELS) {
     let retryCount = 0;
@@ -206,7 +312,7 @@ async function callGemini(apiKey: string, prompt: string, maxRetries: number = 2
       try {
         console.log(`Trying Gemini model: ${model}${retryCount > 0 ? ` (retry ${retryCount})` : ''}`);
         const response = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${currentApiKey}`,
           {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -229,30 +335,58 @@ async function callGemini(apiKey: string, prompt: string, maxRetries: number = 2
           const errorStatus = errorData?.error?.status || '';
           
           if (response.status === 429 || errorStatus === 'RESOURCE_EXHAUSTED') {
-            // Check if it's a rate limit that might recover with waiting
-            const retryAfter = response.headers.get('Retry-After');
+            // Key rotation: try next DB key if available
+            if (dbKeys.length > 0 && currentKeyIndex < dbKeys.length - 1) {
+              console.log(`Key ${currentKeyIndex + 1} rate limited, rotating to next key...`);
+              
+              // Increment error count for this key
+              if (serviceClient && currentKeyRecord) {
+                await incrementKeyErrorCount(serviceClient, currentKeyRecord.id);
+              }
+              
+              currentKeyIndex++;
+              currentKeyRecord = dbKeys[currentKeyIndex];
+              currentApiKey = currentKeyRecord.key_value;
+              console.log(`Switched to DB key ${currentKeyIndex + 1}/${dbKeys.length}`);
+              retryCount = 0; // Reset retry count for new key
+              continue;
+            }
             
+            // Check if it's a rate limit that might recover with waiting
             if (retryCount < maxRetries) {
-              // Try waiting and retrying for rate limits
               console.log(`Rate limit hit on ${model}, will retry after backoff...`);
               await waitWithBackoff(retryCount);
               retryCount++;
               continue;
             }
             
-            // All retries exhausted for this model due to rate limit
+            // All retries and keys exhausted
             isQuotaExceeded = true;
-            lastGeminiError = 'QUOTA_EXCEEDED: Your Gemini API has reached its rate limit. This may be due to usage on other platforms (Google AI Studio, other apps). Please wait a few minutes and try again, or check your usage at aistudio.google.com.';
-            // Try next model instead of breaking completely
+            lastGeminiError = 'QUOTA_EXCEEDED: All API keys have reached their rate limit. Please wait a few minutes and try again.';
             break;
           } else if (response.status === 403 || errorStatus === 'PERMISSION_DENIED') {
+            // Key is invalid - try next DB key
+            if (dbKeys.length > 0 && currentKeyIndex < dbKeys.length - 1) {
+              console.log(`Key ${currentKeyIndex + 1} permission denied, rotating to next key...`);
+              
+              // Deactivate this key
+              if (serviceClient && currentKeyRecord) {
+                await incrementKeyErrorCount(serviceClient, currentKeyRecord.id, true);
+              }
+              
+              currentKeyIndex++;
+              currentKeyRecord = dbKeys[currentKeyIndex];
+              currentApiKey = currentKeyRecord.key_value;
+              retryCount = 0;
+              continue;
+            }
+            
             lastGeminiError = 'API access denied. Please verify your Gemini API key is valid and has the correct permissions.';
-            break; // Move to next model
+            break;
           } else if (response.status === 400) {
             lastGeminiError = 'Invalid request to AI. The generation request was rejected. Please try again with different settings.';
-            break; // Move to next model
+            break;
           } else if (response.status >= 500) {
-            // Server errors - retry with backoff
             if (retryCount < maxRetries) {
               console.log(`Server error on ${model}, will retry after backoff...`);
               await waitWithBackoff(retryCount);
@@ -263,7 +397,7 @@ async function callGemini(apiKey: string, prompt: string, maxRetries: number = 2
           } else {
             lastGeminiError = `AI service error (${response.status}): ${errorMessage.slice(0, 100)}`;
           }
-          break; // Move to next model
+          break;
         }
 
         const data = await response.json();
@@ -280,9 +414,14 @@ async function callGemini(apiKey: string, prompt: string, maxRetries: number = 2
         const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
         if (text) {
           console.log(`Success with ${model}`);
+          
+          // Reset error count on success
+          if (serviceClient && currentKeyRecord) {
+            await resetKeyErrorCount(serviceClient, currentKeyRecord.id);
+          }
+          
           return text;
         } else {
-          // Check for content filtering or safety issues
           const finishReason = data.candidates?.[0]?.finishReason;
           if (finishReason === 'SAFETY') {
             lastGeminiError = 'Content was filtered by safety settings. Please try a different topic.';
@@ -290,7 +429,7 @@ async function callGemini(apiKey: string, prompt: string, maxRetries: number = 2
             lastGeminiError = 'AI returned empty response. Please try again.';
           }
         }
-        break; // Move to next model
+        break;
       } catch (err) {
         console.error(`Error with ${model}:`, err);
         
@@ -302,11 +441,41 @@ async function callGemini(apiKey: string, prompt: string, maxRetries: number = 2
         }
         
         lastGeminiError = `Connection error: Unable to reach AI service. Please check your internet connection and try again.`;
-        break; // Move to next model
+        break;
       }
     }
   }
   return null;
+}
+
+// Save test to test_presets bank
+async function saveToTestBank(
+  serviceClient: any, 
+  module: string, 
+  topic: string, 
+  payload: any
+): Promise<boolean> {
+  try {
+    const { error } = await serviceClient
+      .from('test_presets')
+      .insert({
+        module,
+        topic,
+        payload,
+        is_published: false, // Admin must manually publish
+      });
+    
+    if (error) {
+      console.error('Failed to save to test bank:', error);
+      return false;
+    }
+    
+    console.log(`Saved ${module} test to test_presets bank`);
+    return true;
+  } catch (err) {
+    console.error('Error saving to test bank:', err);
+    return false;
+  }
 }
 
 function getLastGeminiError(): string {
@@ -1122,6 +1291,11 @@ Return ONLY valid JSON in this exact format:
 }
 
 // Listening question type prompts
+// HARDCODED per Architect spec: 4 minutes audio (~600 words), 7 questions
+const LISTENING_AUDIO_LENGTH_MINUTES = 4;
+const LISTENING_QUESTION_COUNT = 7;
+const LISTENING_WORD_COUNT = 600; // 4 min * 150 words/min
+
 function getListeningPrompt(
   questionType: string, 
   topic: string, 
@@ -1132,1175 +1306,60 @@ function getListeningPrompt(
 ): string {
   const difficultyDesc = difficulty === 'easy' ? 'Band 5-5.5' : difficulty === 'medium' ? 'Band 6-6.5' : difficulty === 'hard' ? 'Band 7-7.5' : 'Band 8-9 (Expert level - extremely challenging, requires near-native comprehension, subtle inferences, and mastery of nuanced vocabulary)';
   
-  // Determine transcript specifications based on config
-  // Default: ~225 words (~90 seconds of audio)
-  let targetWordCount = listeningConfig?.wordCount || 225;
-  let targetDurationSeconds = listeningConfig?.durationSeconds || 90;
+  // HARDCODED per Architect spec: 4 minutes audio, 7 questions
+  const targetWordCount = LISTENING_WORD_COUNT;
+  const targetDurationSeconds = LISTENING_AUDIO_LENGTH_MINUTES * 60; // 240 seconds
+  const effectiveQuestionCount = LISTENING_QUESTION_COUNT;
   
-  // If using word count mode, estimate duration (150 words/minute)
-  if (listeningConfig?.useWordCountMode && listeningConfig.wordCount) {
-    targetWordCount = listeningConfig.wordCount;
-    targetDurationSeconds = Math.round((targetWordCount / 150) * 60);
-  } else if (!listeningConfig?.useWordCountMode && listeningConfig?.durationSeconds) {
-    // If using duration mode, estimate word count
-    targetDurationSeconds = listeningConfig.durationSeconds;
-    targetWordCount = Math.round((targetDurationSeconds / 60) * 150);
-  }
-  
-  // Clamp to safe limits (max ~1200 words / 480 seconds = 8 minutes at 85% of Gemini capacity)
-  targetWordCount = Math.min(1200, Math.max(100, targetWordCount));
-  targetDurationSeconds = Math.min(480, Math.max(30, targetDurationSeconds));
-  
-  const wordRange = `${targetWordCount - 30}-${targetWordCount + 30}`;
+  const wordRange = `${targetWordCount - 50}-${targetWordCount + 50}`;
 
   // Determine if we use 1 or 2 speakers based on config
   const useTwoSpeakers = listeningConfig?.speakerConfig?.useTwoSpeakers !== false;
 
-  // Build prompt for realistic character names
+  // SSML pause instructions per Architect spec - CRITICAL for TTS pacing
+  const ssmlInstructions = `
+   CRITICAL AUDIO PACING - MUST USE SSML TAGS:
+   - You MUST use SSML tags for pauses in the dialogue
+   - Insert <break time='5s'/> between major topic changes or question sections
+   - Insert <break time='2s'/> between speaker turns  
+   - Insert <break time='1s'/> for natural pauses within speech
+   - Example: "Speaker1: Welcome to the museum tour.<break time='2s'/> Let me start by explaining the layout."
+   - This ensures test takers have time to write answers`;
+
+  // Build prompt for realistic character names with SSML instructions
   const characterInstructions = useTwoSpeakers
     ? `1. Create a dialogue script between two characters that is:
-   - ${wordRange} words total (approximately ${targetDurationSeconds} seconds when spoken)
+   - ${wordRange} words total (approximately ${targetDurationSeconds} seconds / ${LISTENING_AUDIO_LENGTH_MINUTES} minutes when spoken)
    - Natural and conversational with realistic names/roles (e.g., "Receptionist", "Mark", "Dr. Smith", "Sarah")
    - In the output JSON dialogue field, you MUST use "Speaker1:" and "Speaker2:" prefixes for TTS processing
    - ALSO include a "speaker_names" object in your JSON that maps Speaker1/Speaker2 to their real names
    - Contains specific details (names, numbers, dates, locations)
+   ${ssmlInstructions}
    
    CRITICAL OUTPUT FORMAT:
    - dialogue: Use "Speaker1:" and "Speaker2:" prefixes (required for audio generation)
    - speaker_names: {"Speaker1": "Real Name or Role", "Speaker2": "Real Name or Role"}
    - Example: speaker_names: {"Speaker1": "Sarah", "Speaker2": "Receptionist"}`
     : `1. Create a monologue script by a single speaker that is:
-   - ${wordRange} words total (approximately ${targetDurationSeconds} seconds when spoken)
+   - ${wordRange} words total (approximately ${targetDurationSeconds} seconds / ${LISTENING_AUDIO_LENGTH_MINUTES} minutes when spoken)
    - Clear and informative, like a tour guide, lecturer, or announcer
    - Use "Speaker1:" prefix for all lines (required for TTS)
    - ALSO include a "speaker_names" object: {"Speaker1": "Appropriate Role/Title"}
    - Example: speaker_names: {"Speaker1": "Tour Guide"} or {"Speaker1": "Professor Williams"}
-   - Contains specific details (names, numbers, dates, locations)`;
+   - Contains specific details (names, numbers, dates, locations)
+   ${ssmlInstructions}`;
 
   const basePrompt = `Generate an IELTS Listening test section with the following specifications:
 
 Topic: ${topic}
 Scenario: ${scenario.description}
 Difficulty: ${difficulty} (${difficultyDesc})
+FIXED PARAMETERS: ${LISTENING_AUDIO_LENGTH_MINUTES} minutes audio, ${effectiveQuestionCount} questions
 
 Requirements:
 ${characterInstructions}
 
-`;
 
-  // Handle FILL_IN_BLANK with optional Spelling Mode or Monologue Mode
-  if (questionType === 'FILL_IN_BLANK') {
-    const spellingMode = listeningConfig?.spellingMode;
-    const isMonologue = listeningConfig?.monologueMode === true;
-    
-    // Monologue mode (IELTS Part 4 style) - single speaker, no spelling
-    if (isMonologue) {
-      return basePrompt + `2. Create ${questionCount} fill-in-the-blank questions in IELTS Part 4 monologue style.
-
-CRITICAL RULES FOR MONOLOGUE MODE:
-- This is a SINGLE SPEAKER monologue (like a lecture, tour guide, or presentation)
-- Use "Speaker1:" prefix for ALL lines (required for TTS)
-- NO spelling of names - the listener must infer from context
-- Names should NOT be given as blanks UNLESS the speaker explicitly spells them out
-- Blanks should contain common nouns, dates, numbers, or descriptive phrases - NOT proper names
-
-CRITICAL BLANK POSITIONING:
-- VARY the position of blanks in sentences - do NOT always put them at the end
-- Use a mix of these patterns across questions:
-  - Start of sentence: "_____ is the most important factor in..."
-  - Middle of sentence: "The main attraction, called _____, was built in..."
-  - End of sentence: "The building was completed in _____."
-- Each question MUST have the blank ("_____") positioned RANDOMLY - approximately 1/3 at start, 1/3 in middle, 1/3 at end
-
-ANSWER VARIETY:
-- IMPORTANT: Vary answer lengths - use ONE word, TWO words, or THREE words AND/OR a number
-- Some answers should be exactly 1 word (e.g., "Tuesday", "registration")
-- Some answers should be exactly 2 words (e.g., "next Monday", "room three")
-- Some answers can be 3 words (e.g., "main conference hall")
-- Numbers are acceptable answers: "1985", "15", "222"
-- Maximum allowed is 3 words AND/OR a number
-
-Return ONLY valid JSON (no markdown code blocks) in this exact format:
-{
-  "dialogue": "Speaker1: Welcome to today's lecture on ancient architecture...\\nSpeaker1: The technique, known as barrel vaulting, was first developed...\\nSpeaker1: Our main focus today will be on three important structures...",
-  "speaker_names": {"Speaker1": "Professor Williams"},
-  "instruction": "Complete the notes below. Write NO MORE THAN THREE WORDS AND/OR A NUMBER for each answer.",
-  "questions": [
-    {
-      "question_number": 1,
-      "question_text": "_____ was the primary building material used.",
-      "correct_answer": "Limestone",
-      "explanation": "Speaker mentions limestone as the primary material"
-    },
-    {
-      "question_number": 2,
-      "question_text": "The construction method, called _____, required special skills.",
-      "correct_answer": "barrel vaulting",
-      "explanation": "Speaker names barrel vaulting as the construction method"
-    },
-    {
-      "question_number": 3,
-      "question_text": "The temple was completed in _____.",
-      "correct_answer": "450 BC",
-      "explanation": "Speaker states the completion date"
-    }
-  ]
-}`;
-    }
-    
-    if (spellingMode?.enabled) {
-      // IELTS Part 1 Style with spelling/number patterns
-      const scenarioMap = {
-        phone_call: 'a phone call inquiry (e.g., booking service, requesting information)',
-        hotel_booking: 'a hotel reservation phone call',
-        job_inquiry: 'a job application or recruitment inquiry call',
-      };
-      const difficultyDesc = spellingMode.spellingDifficulty === 'high' 
-        ? 'unusual or foreign-sounding names (e.g., "Cholmondeley", "Ankita Sharma")' 
-        : 'common but still spellings required names (e.g., "Thompson", "Catherine")';
-      const numberDesc = spellingMode.numberFormat === 'phone_number' 
-        ? 'phone numbers using "double" or "triple" patterns (e.g., "double seven, five, nine")' 
-        : spellingMode.numberFormat === 'date' 
-        ? 'dates (e.g., "the fifteenth of March")' 
-        : 'postcodes with letters and numbers mixed (e.g., "SW1A 1AA")';
-      
-      return basePrompt + `2. Create ${questionCount} fill-in-the-blank questions in IELTS Part 1 style.
-
-CRITICAL SPELLING & NUMBER RULES:
-- The dialogue MUST be ${scenarioMap[spellingMode.testScenario]}.
-- For at least one blank, the speaker MUST SPELL OUT the answer letter-by-letter using dashes.
-- IMPORTANT SPELLING RULE: Only spell the part that appears IN THE BLANK, not the part already visible in the question text.
-  - Example: If question is "Name: Dr. ____ Reed", and full name is "Evelyn Reed", spell "Evelyn" (E-V-E-L-Y-N) NOT "Reed"
-  - The blank should contain what needs to be written, so spell ONLY that missing word/name
-- CRITICAL: Names should only be blank answers if they are SPELLED OUT by a speaker. If not spelled, use common nouns instead.
-- Use ${difficultyDesc} for names.
-- Include ${numberDesc} for number-based gaps.
-- Create realistic "distractor and correction" patterns (e.g., "Oh wait, it's 4, not 5").
-
-CRITICAL BLANK POSITIONING:
-- VARY the position of blanks in sentences - do NOT always put them at the end
-- Use a mix of these patterns across questions:
-  - Start/Label style: "Name: _____" or "Address: _____"
-  - Middle of phrase: "The booking is for _____ on Tuesday"
-  - End of phrase: "The postcode is _____"
-
-ANSWER VARIETY:
-- IMPORTANT: Vary answer lengths - use ONE word, TWO words, or THREE words AND/OR numbers:
-  - Some answers should be exactly 1 word (e.g., "Tuesday", "Sharma")
-  - Some answers should be exactly 2 words (e.g., "next Monday", "room three")
-  - Some answers can be 3 words (e.g., "conference room B")
-  - Numbers are acceptable: "222", "15", "March 5th"
-  - Maximum allowed is 3 words AND/OR a number
-
-CRITICAL FOR NUMBER ANSWERS:
-- When numbers are spoken as "triple two" or "double seven", the CORRECT ANSWER must be the NUMERIC form (e.g., "222" or "77")
-- Both "222" and "triple two" should be considered correct (put the numeric form as correct_answer)
-
-Return ONLY valid JSON (no markdown code blocks) in this exact format:
-{
-  "dialogue": "Speaker1: Hello, I'd like to book an appointment...\\nSpeaker2: Certainly, can I take your name please?\\nSpeaker1: Yes, it's Dr. Evelyn Reed. Evelyn is spelled E-V-E-L-Y-N.\\nSpeaker2: Thank you. And your phone number?\\nSpeaker1: It's oh-seven-seven, triple two, five, nine.",
-  "speaker_names": {"Speaker1": "Dr. Evelyn Reed", "Speaker2": "Receptionist"},
-  "instruction": "Complete the notes below. Write NO MORE THAN THREE WORDS AND/OR A NUMBER for each answer.",
-  "questions": [
-    {
-      "question_number": 1,
-      "question_text": "Doctor's first name: _____",
-      "correct_answer": "Evelyn",
-      "explanation": "Speaker1 spells out E-V-E-L-Y-N for Evelyn (the blank portion)"
-    },
-    {
-      "question_number": 2,
-      "question_text": "Phone number last three digits: _____",
-      "correct_answer": "259",
-      "explanation": "Speaker says 'five, nine' for the last digits"
-    }
-  ]
-}`;
-    }
-    
-    // Standard Fill-in-Blank (no spelling mode, dialogue with two speakers)
-    return basePrompt + `2. Create ${questionCount} fill-in-the-blank questions.
-
-CRITICAL RULES FOR STANDARD FILL-IN-BLANK:
-- Names should NOT be given as blanks UNLESS the speaker explicitly spells them out letter by letter
-- If a name is mentioned but NOT spelled, do NOT make it a blank answer
-- Blanks should contain common nouns, dates, numbers, locations, or descriptive phrases
-
-CRITICAL BLANK POSITIONING:
-- VARY the position of blanks in sentences - do NOT always put them at the end
-- Use a mix of these patterns across questions:
-  - Start of sentence: "_____ is required for registration."
-  - Middle of sentence: "The session on _____ will be held in Room 3."
-  - End of sentence: "The museum was founded in _____."
-- Approximately 1/3 of blanks should be at the start, 1/3 in the middle, and 1/3 at the end
-
-ANSWER VARIETY:
-- IMPORTANT: Vary answer lengths - use ONE word, TWO words, or THREE words AND/OR a number
-- Some answers should be exactly 1 word (e.g., "Tuesday", "registration")
-- Some answers should be exactly 2 words (e.g., "next Monday", "room three")
-- Some answers can be 3 words (e.g., "main conference hall")
-- Numbers are acceptable answers: "1985", "15", "222"
-- Maximum allowed is 3 words AND/OR a number, but do NOT make all answers the same length
-
-Return ONLY valid JSON (no markdown code blocks) in this exact format:
-{
-  "dialogue": "Speaker1: Hello, welcome to the museum...\\nSpeaker2: Thank you...",
-  "speaker_names": {"Speaker1": "Tour Guide", "Speaker2": "Visitor"},
-  "instruction": "Complete the notes below. Write NO MORE THAN THREE WORDS AND/OR A NUMBER for each answer.",
-  "questions": [
-    {
-      "question_number": 1,
-      "question_text": "_____ is the most popular exhibit.",
-      "correct_answer": "Ancient pottery",
-      "explanation": "Speaker1 mentions ancient pottery as most popular"
-    },
-    {
-      "question_number": 2,
-      "question_text": "The guided tour starts at _____.",
-      "correct_answer": "10:30",
-      "explanation": "Speaker1 says the tour starts at 10:30"
-    },
-    {
-      "question_number": 3,
-      "question_text": "Visitors need a _____ to enter the special exhibition.",
-      "correct_answer": "membership card",
-      "explanation": "Speaker2 mentions membership card is required"
-    }
-  ]
-}`;
-  }
-
-  switch (questionType) {
-    case 'TABLE_COMPLETION':
-      return basePrompt + `2. Create a table completion task with ${questionCount} blanks.
-
-CRITICAL RULES:
-1. Tables MUST have EXACTLY 3 COLUMNS (no more, no less).
-2. For cells with blanks (has_question: true):
-   - DO NOT use underscores in the content - the input field will be rendered automatically
-   - Place text BEFORE and/or AFTER where the blank should appear using "_____" (5 underscores) as a placeholder
-   - VARY the blank position: start, middle, or end of the cell content
-   - Examples:
-     * Start: {"content": "_____ is required", "has_question": true, "question_number": 1} → renders as [input] is required
-     * Middle: {"content": "The main _____ building", "has_question": true, "question_number": 2} → renders as The main [input] building
-     * End: {"content": "Located near the _____", "has_question": true, "question_number": 3} → renders as Located near the [input]
-     * Blank only: {"content": "_____", "has_question": true, "question_number": 4} → renders as just [input]
-3. DISTRIBUTE blanks across BOTH column 2 AND column 3. Do NOT put all blanks only in one column.
-4. Answer length MUST VARY - use ONE word, TWO words, or THREE words AND/OR a number.
-
-Return ONLY valid JSON (no markdown code blocks) in this exact format:
-{
-  "dialogue": "Speaker1: Let me explain the schedule...\\nSpeaker2: Yes, please...",
-  "speaker_names": {"Speaker1": "Tour Guide", "Speaker2": "Visitor"},
-  "instruction": "Complete the table below. Write NO MORE THAN THREE WORDS AND/OR A NUMBER for each answer.",
-  "table_data": [
-    [{"content": "Time", "is_header": true}, {"content": "Activity", "is_header": true}, {"content": "Location", "is_header": true}],
-    [{"content": "9:00 AM"}, {"content": "_____ and welcome", "has_question": true, "question_number": 1}, {"content": "Main Hall"}],
-    [{"content": "11:00 AM"}, {"content": "Coffee break"}, {"content": "Held in the _____", "has_question": true, "question_number": 2}]
-  ],
-  "questions": [
-    {"question_number": 1, "question_text": "Activity at 9 AM", "correct_answer": "Registration", "explanation": "Speaker mentions registration at 9"},
-    {"question_number": 2, "question_text": "Location at 11 AM", "correct_answer": "garden area", "explanation": "Garden area mentioned for coffee break location"}
-  ]
-}`;
-
-    case 'MULTIPLE_CHOICE_SINGLE':
-      return basePrompt + `2. Create ${questionCount} multiple choice questions (single answer).
-
-Return ONLY valid JSON (no markdown code blocks) in this exact format:
-{
-  "dialogue": "Speaker1: The conference will focus on...\\nSpeaker2: That sounds interesting...",
-  "speaker_names": {"Speaker1": "Professor Smith", "Speaker2": "Student"},
-  "instruction": "Choose the correct letter, A, B, or C.",
-  "questions": [
-    {
-      "question_number": 1,
-      "question_text": "What is the main topic of the conference?",
-      "options": ["A Environmental issues", "B Technology trends", "C Economic policies"],
-      "correct_answer": "B",
-      "explanation": "Speaker1 explicitly mentions technology trends"
-    }
-  ]
-}`;
-
-    case 'MULTIPLE_CHOICE_MULTIPLE':
-      // For MCQ Multiple, we create ONE question "set" where test-takers must pick N answers.
-      // questionCount here represents the number of answers to select (e.g., 2 or 3)
-      const numMCQAnswers = Math.min(questionCount, 3); // Cap at 3 to keep it reasonable
-      const mcqAnswerWord = numMCQAnswers === 2 ? 'TWO' : numMCQAnswers === 3 ? 'THREE' : String(numMCQAnswers);
-
-      return basePrompt + `2. Create ONE multiple choice question where listeners must select ${mcqAnswerWord} correct answers from the options.
-
-IMPORTANT:
-- The question group spans ${numMCQAnswers} question numbers: 1 to ${numMCQAnswers}
-- Return ${numMCQAnswers} question objects with question_number 1..${numMCQAnswers}
-- ALL question objects must have the SAME question_text, SAME options, SAME correct_answer, SAME explanation
-- The correct_answer must be a comma-separated list of ${numMCQAnswers} letters (e.g., "B,D" or "A,C,E")
-- DO NOT always use the same letters - randomize which options are correct
-- Provide 5-6 options total so there are distractors
-
-Return ONLY valid JSON (no markdown code blocks) in this exact format:
-{
-  "dialogue": "Speaker1: There are several benefits to our new system...\\nSpeaker2: Can you tell me more about them?...",
-  "speaker_names": {"Speaker1": "Manager", "Speaker2": "Employee"},
-  "instruction": "Questions 1-${numMCQAnswers}. Choose ${mcqAnswerWord} letters, A-E.",
-  "questions": [
-    {
-      "question_number": 1,
-      "question_text": "Which ${mcqAnswerWord} benefits are mentioned by the speaker?",
-      "options": ["A Cost savings", "B Time efficiency", "C Better quality", "D More flexibility", "E Improved safety"],
-      "correct_answer": "B,D",
-      "explanation": "B is correct because time efficiency is explicitly mentioned. D is correct because flexibility is discussed.",
-      "max_answers": ${numMCQAnswers}
-    },
-    {
-      "question_number": ${numMCQAnswers},
-      "question_text": "Which ${mcqAnswerWord} benefits are mentioned by the speaker?",
-      "options": ["A Cost savings", "B Time efficiency", "C Better quality", "D More flexibility", "E Improved safety"],
-      "correct_answer": "B,D",
-      "explanation": "B is correct because time efficiency is explicitly mentioned. D is correct because flexibility is discussed.",
-      "max_answers": ${numMCQAnswers}
-    }
-  ]
-}`;
-
-    case 'MATCHING_CORRECT_LETTER':
-      return basePrompt + `2. Create ${questionCount} matching questions where listeners match items to categories.
-
-IMPORTANT FOR OPTIONS:
-- Do NOT include the letter prefix in option text (the UI adds it automatically)
-- WRONG: "A Recommended" or "A. Recommended"
-- CORRECT: "Recommended" (just the text, no letter)
-
-Return ONLY valid JSON (no markdown code blocks) in this exact format:
-{
-  "dialogue": "Speaker1: Let me describe each option...\\nSpeaker2: Yes, I need to choose...",
-  "speaker_names": {"Speaker1": "Advisor", "Speaker2": "Client"},
-  "instruction": "What does the speaker say about each item? Choose the correct letter, A-C.",
-  "options": ["Recommended", "Not recommended", "Depends on situation"],
-  "questions": [
-    {
-      "question_number": 1,
-      "question_text": "Online courses",
-      "correct_answer": "A",
-      "explanation": "Speaker recommends online courses"
-    }
-  ]
-}`;
-
-    case 'FLOWCHART_COMPLETION':
-      return basePrompt + `2. Create a flowchart completion task about a process with ${questionCount} blanks.
-
-CRITICAL FORMAT RULES:
-- Each flowchart step with a blank MUST have "text" containing "__X__" where X is the question number
-- Example: "Excess energy is (1) __1__ in the BESS" - the __1__ creates the drop zone
-- Steps without blanks just have plain text
-- DO NOT put blanks at the end of sentences only - vary positions (start, middle, end)
-- Include some distractor options that are NOT correct answers
-
-Return ONLY valid JSON (no markdown code blocks) in this exact format:
-{
-  "dialogue": "Speaker1: Let me explain the process...\\nSpeaker2: Please go ahead...",
-  "speaker_names": {"Speaker1": "HR Manager", "Speaker2": "Applicant"},
-  "instruction": "Complete the flow chart below. Choose the correct answer and drag it into the gap.",
-  "flowchart_title": "Process of Application",
-  "flowchart_steps": [
-    {"id": "step1", "text": "Submit application form online", "hasBlank": false},
-    {"id": "step2", "text": "System sends __1__ to applicant", "hasBlank": true, "blankNumber": 1},
-    {"id": "step3", "text": "Applicant pays the __2__ fee", "hasBlank": true, "blankNumber": 2},
-    {"id": "step4", "text": "Attend interview session", "hasBlank": false},
-    {"id": "step5", "text": "Wait for __3__ from HR", "hasBlank": true, "blankNumber": 3}
-  ],
-  "distractor_options": ["schedule", "discount"],
-  "questions": [
-    {"question_number": 1, "question_text": "Step 2", "correct_answer": "confirmation", "explanation": "System sends confirmation email"},
-    {"question_number": 2, "question_text": "Step 3", "correct_answer": "registration", "explanation": "Applicant pays registration fee"},
-    {"question_number": 3, "question_text": "Step 5", "correct_answer": "decision", "explanation": "Wait for final decision from HR"}
-  ]
-}`;
-
-    case 'DRAG_AND_DROP_OPTIONS':
-      // Ensure we always have more options than questions (at least 2 extra distractor options)
-      const dragOptionCount = Math.max(questionCount + 2, 5);
-      return basePrompt + `2. Create ${questionCount} drag-and-drop questions with ${dragOptionCount} draggable options.
-
-CRITICAL RULES:
-- You MUST provide EXACTLY ${dragOptionCount} drag_options (more options than questions - some are distractors).
-- Each question MUST include a drop zone indicated by 2+ consecutive underscores (e.g., "____").
-- CRITICAL: The blank (____) MUST appear in VARIED POSITIONS across questions:
-  * Some blanks at the BEGINNING of the sentence: "____ is responsible for marketing."
-  * Some blanks in the MIDDLE: "The manager needs to ____ before the meeting."
-  * Some blanks at the END: "John is in charge of ____."
-  * DO NOT put all blanks at the same position!
-- Use this exact pattern in question_text so the UI can render a drop box:
-  "____  is assigned to this department." (blank at START)
-  "The person handles ____ for the team." (blank in MIDDLE)
-  "<Item> ____ ." (blank at END)
-- The draggable options MUST be provided via drag_options.
-
-Return ONLY valid JSON (no markdown code blocks) in this exact format:
-{
-  "dialogue": "Speaker1: Each department has different responsibilities...\\nSpeaker2: I see...",
-  "speaker_names": {"Speaker1": "Department Head", "Speaker2": "New Employee"},
-  "instruction": "Match each person to their responsibility. Drag the correct option to each box.",
-  "drag_options": ["Managing budget", "Training staff", "Customer service", "Quality control", "Marketing", "Scheduling", "Research"],
-  "questions": [
-    {"question_number": 1, "question_text": "____ is John's main focus.", "correct_answer": "Managing budget", "explanation": "John is responsible for budget"},
-    {"question_number": 2, "question_text": "Sarah handles ____ for the team.", "correct_answer": "Training staff", "explanation": "Sarah handles training"},
-    {"question_number": 3, "question_text": "The reception desk manages ____.", "correct_answer": "Customer service", "explanation": "Reception handles customer service"}
-  ]
-}`;
-
-    case 'MAP_LABELING':
-      return basePrompt + `2. Create a map labeling task with ${questionCount} locations to identify.
-
-OFFICIAL IELTS LISTENING FORMAT - CRITICAL RULES:
-- The MAP shows: (1) Letter circles A-H marking UNKNOWN locations (NO place names!), and (2) LABELED landmarks for navigation
-- The AUDIO describes where things are using DIRECTIONS and LANDMARKS only
-- QUESTIONS show the PLACE NAME the test taker must locate (e.g., "Quilt Shop", "Museum")  
-- The correct_answer is the LETTER (A, B, C, etc.) where that place is located
-
-MAP STRUCTURE:
-- map_labels: Answer positions A-H. The "text" field stores what the letter represents (for answer checking) but this text is NOT shown on the map - only the letter circle appears!
-- landmarks: Reference points that ARE labeled on the map (streets, known buildings like "Bank", "Café", "Welcome Center")
-
-AUDIO DIALOGUE STYLE - NATURAL DIRECTIONS:
-- GOOD: "The quilt shop is on Main Street, just past the welcome center on your left"
-- GOOD: "You'll find the museum on Oak Street, directly opposite the bank"
-- GOOD: "The school house is at the far end of Elm Street, on the corner"
-- BAD (NEVER SAY): "The quilt shop is at position F" - test takers must figure this out themselves!
-
-Use directional language: north/south/east/west, opposite, next to, on the corner of, between, past, behind, at the end of
-
-CRITICAL: Answers must NOT be sequential! Randomize: Q1=F, Q2=C, Q3=H (NOT Q1=A, Q2=B, Q3=C)
-
-Return ONLY valid JSON (no markdown code blocks) in this exact format:
-{
-  "dialogue": "Guide: Welcome to the historic craft district. Let me show you around.\\nVisitor: Great, I'm interested in finding the craft shops.\\nGuide: Well, there's a wonderful quilt shop. It's on Main Street, just past the welcome center on your left.\\nVisitor: And what about the handicrafts museum?\\nGuide: The museum is on Oak Street. You'll find it directly opposite the bank - you can't miss it.\\nVisitor: Is there a school house here too?\\nGuide: Yes, the old school house is at the far end of Elm Street, on the corner near Maple Street.",
-  "speaker_names": {"Guide": "Tour Guide", "Visitor": "Tourist"},
-  "instruction": "Label the map. Choose the correct letter, A-H, for each label.",
-  "map_description": "A street map with Oak Street at the top, Ash Street in the middle, and Elm Street at the bottom. Main Street runs vertically on the left, Maple Street on the right.",
-  "map_labels": [
-    {"id": "A", "text": "Art Gallery"},
-    {"id": "B", "text": "Bookshop"},
-    {"id": "C", "text": "Handicrafts Museum"},
-    {"id": "D", "text": "Antique Store"},
-    {"id": "E", "text": "Pottery Shop"},
-    {"id": "F", "text": "Quilt Shop"},
-    {"id": "G", "text": "Tea House"},
-    {"id": "H", "text": "School House"}
-  ],
-  "landmarks": [
-    {"id": "L1", "text": "Bank"},
-    {"id": "L2", "text": "Café"},
-    {"id": "L3", "text": "Gift Shop"},
-    {"id": "L4", "text": "Welcome Center"}
-  ],
-  "questions": [
-    {"question_number": 1, "question_text": "Quilt Shop", "correct_answer": "F", "explanation": "Guide says it's past the welcome center on Main Street"},
-    {"question_number": 2, "question_text": "Handicrafts Museum", "correct_answer": "C", "explanation": "Guide says it's opposite the bank on Oak Street"},
-    {"question_number": 3, "question_text": "School House", "correct_answer": "H", "explanation": "Guide says it's at the far end of Elm Street, near Maple Street"}
-  ]
-}`;
-
-    case 'NOTE_COMPLETION':
-      return basePrompt + `2. Create a note completion task with ${questionCount} blanks organized in categories.
-   - IMPORTANT: Vary answer lengths - use ONE word, TWO words, or THREE words AND/OR a number
-   - Maximum allowed is 3 words AND/OR a number, but do NOT make all answers the same length
-
-Return ONLY valid JSON (no markdown code blocks) in this exact format:
-{
-  "dialogue": "Speaker1: Let me explain the key points...\\nSpeaker2: Please go ahead...",
-  "speaker_names": {"Speaker1": "Lecturer", "Speaker2": "Moderator"},
-  "instruction": "Complete the notes below. Write NO MORE THAN THREE WORDS AND/OR A NUMBER for each answer.",
-  "note_sections": [
-    {
-      "title": "Main Topic",
-      "items": [
-        {"text_before": "The primary focus is on", "question_number": 1, "text_after": ""},
-        {"text_before": "This relates to", "question_number": 2, "text_after": "in modern contexts"}
-      ]
-    },
-    {
-      "title": "Key Details",
-      "items": [
-        {"text_before": "The main benefit includes", "question_number": 3, "text_after": ""}
-      ]
-    }
-  ],
-  "questions": [
-    {"question_number": 1, "question_text": "Note 1", "correct_answer": "research methods", "explanation": "Speaker mentions research methods"},
-    {"question_number": 2, "question_text": "Note 2", "correct_answer": "practical applications", "explanation": "Related to practical use"},
-    {"question_number": 3, "question_text": "Note 3", "correct_answer": "significant cost savings", "explanation": "Benefits discussed"}
-  ]
-}`;
-
-    default:
-      return basePrompt + `2. Create ${questionCount} fill-in-the-blank questions.
-   - Each question MUST include a blank indicated by 2+ underscores (e.g., "_____") where the answer goes.
-   - IMPORTANT: Vary answer lengths - use ONE word, TWO words, or THREE words AND/OR a number
-   - Maximum allowed is 3 words AND/OR a number, but do NOT make all answers the same length
-
-Return ONLY valid JSON (no markdown code blocks) in this exact format:
-{
-  "dialogue": "Speaker1: dialogue...\\nSpeaker2: response...",
-  "speaker_names": {"Speaker1": "Host", "Speaker2": "Guest"},
-  "instruction": "Complete the notes below. Write NO MORE THAN THREE WORDS AND/OR A NUMBER for each answer.",
-  "questions": [
-    {
-      "question_number": 1,
-      "question_text": "The event takes place in _____.",
-      "correct_answer": "the main garden",
-      "explanation": "Speaker mentions the main garden location"
-    }
-  ]
-}`;
-  }
-}
-
-serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
-
-  try {
-    console.log("Starting generate-ai-practice function");
-    
-    // Auth
-    const supabaseClient = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_ANON_KEY') ?? '',
-      { global: { headers: { Authorization: req.headers.get('Authorization')! } } }
-    );
-
-    const { data: { user } } = await supabaseClient.auth.getUser();
-    if (!user) {
-      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-        status: 401,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-
-    // Get API key
-    const { data: secretData } = await supabaseClient
-      .from('user_secrets')
-      .select('encrypted_value')
-      .eq('user_id', user.id)
-      .eq('secret_name', 'GEMINI_API_KEY')
-      .single();
-
-    if (!secretData) {
-      return new Response(JSON.stringify({ 
-        error: 'Gemini API key not found. Please add your API key in Settings.' 
-      }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-
-    const appEncryptionKey = Deno.env.get('app_encryption_key');
-    if (!appEncryptionKey) throw new Error('Encryption key not configured');
-    
-    const geminiApiKey = await decryptApiKey(secretData.encrypted_value, appEncryptionKey);
-
-    // Parse request body first to check for skipPreflight option
-    const body = await req.json();
-    const { module, questionType, difficulty, topicPreference, questionCount, timeMinutes, readingConfig, listeningConfig, writingConfig, skipPreflight } = body;
-    
-    const topic = topicPreference || IELTS_TOPICS[Math.floor(Math.random() * IELTS_TOPICS.length)];
-    const testId = crypto.randomUUID();
-
-    console.log(`Generating ${module} test: ${questionType}, ${difficulty}, topic: ${topic}, questions: ${questionCount}`);
-
-    // Pre-flight validation: Uses lightweight list endpoint, allows skipping
-    // The main callGemini function now has its own retry logic for rate limits
-    const preflightResult = await preflightApiCheck(geminiApiKey, skipPreflight === true);
-    if (!preflightResult.ok) {
-      console.error('Pre-flight API check failed:', preflightResult.error);
-      const isQuota = preflightResult.error?.startsWith('QUOTA_EXCEEDED');
-      return new Response(JSON.stringify({ 
-        error: preflightResult.error,
-        errorType: isQuota ? 'QUOTA_EXCEEDED' : 'API_ERROR',
-        suggestion: isQuota 
-          ? 'Your API key may have been used on other platforms. Check usage at aistudio.google.com or wait a few minutes.'
-          : 'Please verify your API key in settings.',
-        preflightFailed: true
-      }), {
-        status: isQuota ? 429 : 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-    if (readingConfig) {
-      console.log(`Reading config: paragraphs=${readingConfig.paragraphCount}, words=${readingConfig.wordCount}, preset=${readingConfig.passagePreset}`);
-    }
-    if (listeningConfig) {
-      console.log(`Listening config: duration=${listeningConfig.durationSeconds}s, words=${listeningConfig.wordCount}, preset=${listeningConfig.transcriptPreset}`);
-    }
-
-    if (module === 'reading') {
-      // Generate Reading Test with specific question type prompt
-      const readingPrompt = getReadingPrompt(questionType, topic, difficulty, questionCount, readingConfig);
-
-      const result = await callGemini(geminiApiKey, readingPrompt);
-      
-      // Track tokens used for this call
-      let totalTokensUsed = getLastTokensUsed();
-      
-      if (!result) {
-        // If quota exceeded, return special error with status 429
-        if (wasQuotaExceeded()) {
-          return new Response(JSON.stringify({ 
-            error: getLastGeminiError(),
-            errorType: 'QUOTA_EXCEEDED',
-            suggestion: 'Check your usage at aistudio.google.com or wait a few minutes before retrying.'
-          }), {
-            status: 429,
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-          });
-        }
-        return new Response(JSON.stringify({ error: getLastGeminiError() }), {
-          status: 500,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        });
-      }
-      
-      // Update quota tracking in database
-      const serviceClient = createClient(
-        Deno.env.get('SUPABASE_URL') ?? '',
-        Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-      );
-      await updateQuotaTracking(serviceClient, user.id, totalTokensUsed);
-
-      let parsed;
-      try {
-        const jsonStr = extractJsonFromResponse(result);
-        parsed = JSON.parse(jsonStr);
-      } catch (e) {
-        console.error("Failed to parse Gemini response:", e, result?.substring(0, 500));
-        return new Response(JSON.stringify({ error: 'Failed to parse generated content. Please try again.' }), {
-          status: 500,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        });
-      }
-
-      // Build question group with proper structure
-      const groupId = crypto.randomUUID();
-      const passageId = crypto.randomUUID();
-
-      // Build options based on question type
-      let groupOptions: any = undefined;
-      if (questionType === 'MATCHING_HEADINGS' && parsed.headings) {
-        groupOptions = { headings: parsed.headings };
-      } else if (questionType === 'MATCHING_INFORMATION' && parsed.options) {
-        groupOptions = { options: parsed.options };
-      } else if (questionType === 'MATCHING_SENTENCE_ENDINGS') {
-        groupOptions = { 
-          sentence_beginnings: parsed.sentence_beginnings,
-          sentence_endings: parsed.sentence_endings 
-        };
-      } else if (questionType === 'SUMMARY_WORD_BANK' || questionType === 'SUMMARY_COMPLETION') {
-        groupOptions = { 
-          word_bank: parsed.word_bank,
-          summary_text: parsed.summary_text 
-        };
-      } else if (questionType === 'SENTENCE_COMPLETION' && parsed.word_bank) {
-        groupOptions = { 
-          word_bank: parsed.word_bank,
-          use_dropdown: true
-        };
-      } else if (questionType === 'FLOWCHART_COMPLETION') {
-        // Flowchart data is stored as structured JSON, rendered on frontend
-        groupOptions = { 
-          flowchart_title: parsed.flowchart_title,
-          flowchart_steps: parsed.flowchart_steps,
-        };
-      } else if (questionType === 'TABLE_COMPLETION') {
-        groupOptions = { table_data: parsed.table_data };
-      } else if (questionType === 'NOTE_COMPLETION') {
-        groupOptions = { note_sections: parsed.note_sections };
-      } else if (questionType === 'MAP_LABELING') {
-        // Map data is stored as structured JSON, rendered on frontend
-        groupOptions = { 
-          map_description: parsed.map_description,
-          map_labels: parsed.map_labels,
-        };
-      } else if (questionType.includes('MULTIPLE_CHOICE') && parsed.questions?.[0]?.options) {
-        // For MCQ Multiple, store max_answers + option_format at GROUP level so UI + navigation can read it.
-        if (questionType === 'MULTIPLE_CHOICE_MULTIPLE') {
-          const maxAnswers = parsed.questions?.[0]?.max_answers || Math.min(questionCount, 3);
-          groupOptions = {
-            options: parsed.questions[0].options,
-            max_answers: maxAnswers,
-            option_format: parsed.questions?.[0]?.option_format || 'A',
-          };
-        } else {
-          groupOptions = { options: parsed.questions[0].options };
-        }
-      } else if ((questionType === 'FILL_IN_BLANK' || questionType === 'SHORT_ANSWER') && parsed.display_options) {
-        // Handle fill-in-blank display variations
-        groupOptions = {
-          ...parsed.display_options,
-          paragraph_text: parsed.display_options?.paragraph_text,
-        };
-      }
-
-      const questions = (() => {
-        // Normalize MCQ Multiple as a single group spanning N question numbers.
-        if (questionType === 'MULTIPLE_CHOICE_MULTIPLE') {
-          const maxAnswers = (groupOptions as any)?.max_answers || Math.min(questionCount, 3);
-          const first = parsed.questions?.[0] || {};
-          const base = {
-            question_text: first.question_text,
-            correct_answer: first.correct_answer,
-            explanation: first.explanation,
-            options: first.options || null,
-            heading: first.heading || null,
-            table_data: parsed.table_data || null,
-            max_answers: first.max_answers || maxAnswers,
-          };
-
-          return Array.from({ length: maxAnswers }, (_, i) => ({
-            id: crypto.randomUUID(),
-            question_number: i + 1,
-            question_type: questionType,
-            ...base,
-          }));
-        }
-
-        return (parsed.questions || []).map((q: any, i: number) => ({
-          id: crypto.randomUUID(),
-          question_number: q.question_number || i + 1,
-          question_text: q.question_text,
-          question_type: questionType,
-          correct_answer: q.correct_answer,
-          explanation: q.explanation,
-          options: q.options || null,
-          heading: q.heading || null,
-          table_data: parsed.table_data || null,
-          max_answers: q.max_answers || undefined,
-        }));
-      })();
-
-      return new Response(JSON.stringify({
-        testId,
-        topic,
-        passage: {
-          id: passageId,
-          title: parsed.passage.title,
-          content: parsed.passage.content,
-          passage_number: 1,
-        },
-          questionGroups: [{
-            id: groupId,
-            instruction: parsed.instruction || `Questions 1-${questionCount}`,
-            question_type: questionType,
-            start_question: 1,
-            end_question: questionType === 'MULTIPLE_CHOICE_MULTIPLE'
-              ? ((groupOptions as any)?.max_answers || questions.length)
-              : questions.length,
-            options: groupOptions,
-            questions: questions,
-          }],
-      }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-
-    } else if (module === 'listening') {
-      // Generate Listening Test
-      const scenario = LISTENING_SCENARIOS[Math.floor(Math.random() * LISTENING_SCENARIOS.length)];
-      const listeningPrompt = getListeningPrompt(questionType, topic, difficulty, questionCount, scenario, listeningConfig);
-
-      const result = await callGemini(geminiApiKey, listeningPrompt);
-      
-      // Track tokens used
-      let totalTokensUsed = getLastTokensUsed();
-      
-      if (!result) {
-        // If quota exceeded, return special error with status 429
-        if (wasQuotaExceeded()) {
-          return new Response(JSON.stringify({ 
-            error: getLastGeminiError(),
-            errorType: 'QUOTA_EXCEEDED',
-            suggestion: 'Check your usage at aistudio.google.com or wait a few minutes before retrying.'
-          }), {
-            status: 429,
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-          });
-        }
-        return new Response(JSON.stringify({ error: 'Failed to generate listening test' }), {
-          status: 500,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        });
-      }
-      
-      // Update quota tracking
-      const serviceClient = createClient(
-        Deno.env.get('SUPABASE_URL') ?? '',
-        Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-      );
-      await updateQuotaTracking(serviceClient, user.id, totalTokensUsed);
-
-      let parsed;
-      try {
-        const jsonStr = extractJsonFromResponse(result);
-        parsed = JSON.parse(jsonStr);
-      } catch (e) {
-        console.error("Failed to parse Gemini response:", e, result?.substring(0, 500));
-        return new Response(JSON.stringify({ error: 'Failed to parse generated content. Please try again.' }), {
-          status: 500,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        });
-      }
-
-      // Generate audio with speaker configuration
-      const audio = await generateAudio(geminiApiKey, parsed.dialogue, listeningConfig?.speakerConfig);
-      
-      // For listening tests, audio is required - return error if TTS failed
-      if (!audio) {
-        const ttsError = getLastTTSError();
-        console.error('TTS generation failed for listening test:', ttsError);
-        return new Response(JSON.stringify({ 
-          error: `Audio generation failed: ${ttsError}`,
-          errorType: 'TTS_FAILED',
-          suggestion: 'Please check your Gemini API key quota or try again in a few minutes.'
-        }), {
-          status: 500,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        });
-      }
-
-      // Build group options based on question type
-      let groupOptions: any = undefined;
-      if (questionType === 'MATCHING_CORRECT_LETTER' && parsed.options) {
-        groupOptions = { options: parsed.options, option_format: 'A' };
-      } else if (questionType === 'TABLE_COMPLETION' && parsed.table_data) {
-        groupOptions = { table_data: parsed.table_data };
-      } else if (questionType === 'FLOWCHART_COMPLETION' && parsed.flowchart_steps) {
-        // Map flowchart_steps to the format expected by FlowchartCompletion component
-        // Component expects: steps[].text, steps[].hasBlank, steps[].blankNumber
-        const steps = parsed.flowchart_steps.map((step: any) => ({
-          text: step.label || step.text || '',
-          hasBlank: step.isBlank || step.hasBlank || false,
-          blankNumber: step.questionNumber || step.blankNumber,
-          alignment: step.alignment || 'left',
-        }));
-        
-        // Component also needs options array for drag-and-drop
-        // Extract correct answers as the option pool + add distractors
-        const correctAnswers = parsed.questions?.map((q: any) => q.correct_answer) || [];
-        // Use AI-generated distractors if available, otherwise use generic fallbacks
-        const distractors = parsed.distractor_options || ['Other option', 'Alternative choice'];
-        const allOptions = [...new Set([...correctAnswers, ...distractors])];
-        
-        // CRITICAL: Shuffle the options so they're not in order matching questions
-        const shuffledOptions = [...allOptions].sort(() => Math.random() - 0.5);
-        
-        // Note: We don't generate flowchart image for listening - the interactive component renders it
-        groupOptions = {
-          title: parsed.flowchart_title,
-          steps,
-          options: shuffledOptions,
-          option_format: 'A',
-        };
-      } else if (questionType === 'DRAG_AND_DROP_OPTIONS') {
-        // UI expects group.options.options (array of strings) + option_format
-        // CRITICAL: Shuffle the options so they're not in order matching questions
-        const shuffledDragOptions = [...(parsed.drag_options || [])].sort(() => Math.random() - 0.5);
-        groupOptions = { options: shuffledDragOptions, option_format: 'A' };
-      } else if (questionType === 'MAP_LABELING') {
-        // Map data is stored as structured JSON, rendered on frontend
-        groupOptions = {
-          map_description: parsed.map_description,
-          map_labels: parsed.map_labels,
-          landmarks: parsed.landmarks || [],
-          dropZones: [],
-          options: [],
-        };
-      } else if (questionType === 'NOTE_COMPLETION' && parsed.note_sections) {
-        // Map note_sections to noteCategories format expected by NoteStyleFillInBlank
-        const noteCategories = parsed.note_sections.map((section: any) => ({
-          label: section.title,
-          items: (section.items || []).map((item: any) => ({
-            text: item.text_before || '',
-            hasBlank: true,
-            suffixText: item.text_after || '',
-            questionNumber: item.question_number,
-          })),
-        }));
-        groupOptions = { 
-          noteCategories, 
-          display_mode: 'note_style' 
-        };
-      } else if (questionType === 'MULTIPLE_CHOICE_MULTIPLE' && parsed.questions?.[0]?.options) {
-        // For MCQ Multiple, store max_answers + options at GROUP level matching reading approach
-        const maxAnswers = parsed.questions?.[0]?.max_answers || Math.min(questionCount, 3);
-        groupOptions = {
-          options: parsed.questions[0].options,
-          option_format: 'A',
-          max_answers: maxAnswers,
-        };
-      } else if (questionType.includes('MULTIPLE_CHOICE') && parsed.questions?.[0]?.options) {
-        groupOptions = { options: parsed.questions[0].options };
-      }
-
-      const groupId = crypto.randomUUID();
-
-      // For DRAG_AND_DROP_OPTIONS, store correct answers as option LABELS (A/B/C...) to match UI answer values
-      const dragOptionLabels = (groupOptions?.options || []).map((_: unknown, idx: number) => String.fromCharCode(65 + idx));
-      const dragTextToLabel = new Map<string, string>();
-      if (questionType === 'DRAG_AND_DROP_OPTIONS') {
-        (groupOptions?.options || []).forEach((t: string, idx: number) => {
-          dragTextToLabel.set(String(t).trim().toLowerCase(), dragOptionLabels[idx]);
-        });
-      }
-
-      const questions = (parsed.questions || []).map((q: any, i: number) => {
-        let correct = q.correct_answer;
-        if (questionType === 'DRAG_AND_DROP_OPTIONS') {
-          const asString = String(q.correct_answer ?? '').trim();
-          const upper = asString.toUpperCase();
-          // If Gemini already returned a label, keep it; otherwise map option text -> label
-          if (upper.length === 1 && dragOptionLabels.includes(upper)) {
-            correct = upper;
-          } else {
-            correct = dragTextToLabel.get(asString.toLowerCase()) || asString;
-          }
-        }
-
-        return {
-          id: crypto.randomUUID(),
-          question_number: q.question_number || i + 1,
-          question_text: q.question_text,
-          question_type: questionType,
-          correct_answer: correct,
-          explanation: q.explanation,
-          options: q.options || null,
-          heading: q.heading || null,
-          max_answers: q.max_answers || undefined,
-        };
-      });
-
-      // Process transcript to replace Speaker1/Speaker2 with real names if available
-      let displayTranscript = parsed.dialogue;
-      const speakerNames = parsed.speaker_names || {};
-      
-      if (speakerNames.Speaker1 || speakerNames.Speaker2) {
-        // Replace Speaker1/Speaker2 with actual names in transcript for display
-        if (speakerNames.Speaker1) {
-          displayTranscript = displayTranscript.replace(/Speaker1:/g, `${speakerNames.Speaker1}:`);
-        }
-        if (speakerNames.Speaker2) {
-          displayTranscript = displayTranscript.replace(/Speaker2:/g, `${speakerNames.Speaker2}:`);
-        }
-      }
-
-      // For MULTIPLE_CHOICE_MULTIPLE, end_question = start + max_answers - 1 (treat as ONE logical question with N selections)
-      // This matches the reading implementation where MCMA is counted as covering N question "slots"
-      let finalEndQuestion = questions.length;
-      if (questionType === 'MULTIPLE_CHOICE_MULTIPLE') {
-        const maxAnswers = groupOptions?.max_answers || Math.min(questionCount, 3);
-        finalEndQuestion = maxAnswers; // e.g., "Choose TWO" = questions 1-2
-      }
-
-      return new Response(JSON.stringify({
-        testId,
-        topic,
-        transcript: displayTranscript,
-        speakerNames: speakerNames,
-        audioBase64: audio?.audioBase64 || null,
-        audioFormat: audio ? 'pcm' : null,
-        sampleRate: audio?.sampleRate || null,
-        questionGroups: [{
-          id: groupId,
-          instruction: parsed.instruction || `Questions 1-${finalEndQuestion}`,
-          question_type: questionType,
-          start_question: 1,
-          end_question: finalEndQuestion,
-          options: groupOptions,
-          // For MCMA, send only one question; for others (like MATCHING_CORRECT_LETTER), send all
-          questions: questionType === 'MULTIPLE_CHOICE_MULTIPLE' ? questions.slice(0, 1) : questions,
-        }],
-      }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-
-    } else if (module === 'writing') {
-      // Extract writing configuration
-      const writingConfig = body.writingConfig || {};
-      const taskType = writingConfig.taskType || questionType;
-      const task1VisualType = writingConfig.task1VisualType || 'RANDOM';
-      const task2EssayType = writingConfig.task2EssayType || 'RANDOM';
-      
-      const isFullTest = taskType === 'FULL_TEST';
-      const includeTask1 = isFullTest || taskType === 'TASK_1';
-      const includeTask2 = isFullTest || taskType === 'TASK_2';
-      
-      console.log(`Generating writing test: taskType=${taskType}, visual=${task1VisualType}, essay=${task2EssayType}`);
-
-      // Track total tokens used for quota tracking
-      let writingTotalTokensUsed = 0;
-
-      // Helper function to generate a single task using JSON mode
-      // CRITICAL: Uses response_mime_type: "application/json" for stable JSON output
-      // Combines essay prompt and visual data in ONE API call to prevent truncation
-      async function generateSingleWritingTask(
-        taskNum: 1 | 2,
-        visualType: string,
-        essayType: string
-      ): Promise<any> {
-        const isTask1 = taskNum === 1;
-        
-        // Build prompt based on task type - COMBINED prompt for Task 1
-        let writingPrompt: string;
-        
-        if (isTask1) {
-          const visualTypeToUse =
-            visualType === 'RANDOM'
-              ? [
-                  'BAR_CHART',
-                  'LINE_GRAPH',
-                  'PIE_CHART',
-                  'TABLE',
-                  'MIXED_CHARTS',
-                  'PROCESS_DIAGRAM',
-                  'MAP',
-                ][Math.floor(Math.random() * 7)]
-              : visualType;
-
-          // Build the chart data structure based on visual type
-          let chartDataSchema = '';
-          switch (visualTypeToUse) {
-            case 'BAR_CHART':
-              chartDataSchema = `"visualData": {
-        "type": "BAR_CHART",
-        "title": "[short descriptive title, max 40 chars]",
-        "xAxisLabel": "[x-axis label]",
-        "yAxisLabel": "[y-axis label]",
-        "data": [
-          {"label": "[item1, max 15 chars]", "value": [number]},
-          {"label": "[item2]", "value": [number]},
-          {"label": "[item3]", "value": [number]},
-          {"label": "[item4]", "value": [number]}
-        ]
-      }`;
-              break;
-            case 'LINE_GRAPH':
-              chartDataSchema = `"visualData": {
-        "type": "LINE_GRAPH",
-        "title": "[short descriptive title]",
-        "xAxisLabel": "[x-axis label]",
-        "yAxisLabel": "[y-axis label]",
-        "series": [
-          {
-            "name": "[series name, max 15 chars]",
-            "data": [
-              {"x": "[point1]", "y": [value]},
-              {"x": "[point2]", "y": [value]},
-              {"x": "[point3]", "y": [value]},
-              {"x": "[point4]", "y": [value]},
-              {"x": "[point5]", "y": [value]}
-            ]
-          }
-        ]
-      }`;
-              break;
-            case 'PIE_CHART':
-              chartDataSchema = `"visualData": {
-        "type": "PIE_CHART",
-        "title": "[short descriptive title]",
-        "data": [
-          {"label": "[segment1, max 15 chars]", "value": [percentage as whole number]},
-          {"label": "[segment2]", "value": [percentage]},
-          {"label": "[segment3]", "value": [percentage]},
-          {"label": "[segment4]", "value": [percentage]}
-        ]
-      }`;
-              break;
-            case 'MIXED_CHARTS':
-              chartDataSchema = `"visualData": {
-        "type": "MIXED_CHARTS",
-        "title": "[short descriptive title]",
-        "charts": [
-          {
-            "type": "BAR_CHART",
-            "title": "[bar chart title, max 40 chars]",
-            "xAxisLabel": "[x-axis label]",
-            "yAxisLabel": "[y-axis label]",
-            "data": [
-              {"label": "[item1, max 15 chars]", "value": [number]},
-              {"label": "[item2]", "value": [number]},
-              {"label": "[item3]", "value": [number]},
-              {"label": "[item4]", "value": [number]}
-            ]
-          },
-          {
-            "type": "PIE_CHART",
-            "title": "[pie chart title, max 40 chars]",
-            "data": [
-              {"label": "[segment1, max 15 chars]", "value": [percentage as whole number]},
-              {"label": "[segment2]", "value": [percentage]},
-              {"label": "[segment3]", "value": [percentage]},
-              {"label": "[segment4]", "value": [percentage]}
-            ]
-          }
-        ]
-      }`;
-              break;
-            case 'TABLE':
-              chartDataSchema = `"visualData": {
-        "type": "TABLE",
-        "title": "[short descriptive title]",
-        "headers": ["[Header1]", "[Header2]", "[Header3]"],
-        "rows": [
-          [{"value": "[cell1]"}, {"value": "[cell2]"}, {"value": "[cell3]"}],
-          [{"value": "[cell1]"}, {"value": "[cell2]"}, {"value": "[cell3]"}],
-          [{"value": "[cell1]"}, {"value": "[cell2]"}, {"value": "[cell3]"}]
-        ]
-      }`;
-              break;
-            case 'PROCESS_DIAGRAM':
-              chartDataSchema = `"visualData": {
-        "type": "PROCESS_DIAGRAM",
-        "title": "[short descriptive title]",
-        "steps": [
-          {"label": "[step1 name]", "description": "[brief desc, max 50 chars]"},
-          {"label": "[step2 name]", "description": "[brief desc]"},
-          {"label": "[step3 name]", "description": "[brief desc]"},
-          {"label": "[step4 name]", "description": "[brief desc]"}
-        ]
-      }`;
-              break;
-            case 'MAP':
-              chartDataSchema = `"visualData": {
-        "type": "MAP",
-        "title": "[short descriptive title]",
-        "mapData": {
-          "before": {
-            "year": "[year]",
-            "features": [
-              {"label": "[feature1]", "type": "building"},
-              {"label": "[feature2]", "type": "road"}
-            ]
-          },
-          "after": {
-            "year": "[year]",
-            "features": [
-              {"label": "[feature1]", "type": "building"},
-              {"label": "[feature2]", "type": "park"}
-            ]
-          }
-        }
-      }`;
-              break;
-            default:
-              chartDataSchema = `"visualData": {
-        "type": "BAR_CHART",
-        "title": "[short title]",
-        "data": [{"label": "[item]", "value": [number]}]
-      }`;
-          }
-
-            
           writingPrompt = `You are a data analyst. Generate an IELTS Academic Writing Task 1 with BOTH the essay question AND the chart data.
 
 Topic: ${topic}

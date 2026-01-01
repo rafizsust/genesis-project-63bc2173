@@ -171,6 +171,36 @@ export type Database = {
         }
         Relationships: []
       }
+      api_keys: {
+        Row: {
+          created_at: string
+          error_count: number
+          id: string
+          is_active: boolean
+          key_value: string
+          provider: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          error_count?: number
+          id?: string
+          is_active?: boolean
+          key_value: string
+          provider: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          error_count?: number
+          id?: string
+          is_active?: boolean
+          key_value?: string
+          provider?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       flashcard_cards: {
         Row: {
           correct_count: number
@@ -1051,6 +1081,36 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      test_presets: {
+        Row: {
+          created_at: string
+          id: string
+          is_published: boolean
+          module: string
+          payload: Json
+          topic: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          is_published?: boolean
+          module: string
+          payload?: Json
+          topic: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          is_published?: boolean
+          module?: string
+          payload?: Json
+          topic?: string
+          updated_at?: string
+        }
+        Relationships: []
       }
       test_results: {
         Row: {
