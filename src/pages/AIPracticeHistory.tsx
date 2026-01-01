@@ -205,6 +205,19 @@ export default function AIPracticeHistory() {
     return type.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
   };
 
+  const formatWritingQuestionType = (type: string) => {
+    switch (type) {
+      case 'TASK_1':
+        return 'Task 1 (Report)';
+      case 'TASK_2':
+        return 'Task 2 (Essay)';
+      case 'FULL_TEST':
+        return 'Full Test (Task 1 + Task 2)';
+      default:
+        return formatQuestionType(type);
+    }
+  };
+
   if (authLoading || loading) {
     return (
       <div className="min-h-screen flex flex-col bg-background">
@@ -352,7 +365,9 @@ export default function AIPracticeHistory() {
                           <div className="flex items-center gap-4 text-xs text-muted-foreground flex-wrap">
                             <span className="flex items-center gap-1">
                               <Target className="w-3 h-3" />
-                              {formatQuestionType(test.question_type)}
+                              {test.module === 'writing' 
+                                ? formatWritingQuestionType(test.question_type) 
+                                : formatQuestionType(test.question_type)}
                             </span>
                             <span className="flex items-center gap-1">
                               <Clock className="w-3 h-3" />

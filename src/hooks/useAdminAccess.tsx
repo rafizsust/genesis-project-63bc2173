@@ -2,8 +2,8 @@ import { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from './useAuth';
 
-// TEMPORARY: Set to true to bypass admin check during development
-const BYPASS_ADMIN_CHECK = true;
+// Set to false for production - admin check is enabled
+const BYPASS_ADMIN_CHECK = false;
 
 interface AdminStatus {
   isAdmin: boolean;

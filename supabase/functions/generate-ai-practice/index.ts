@@ -2054,17 +2054,120 @@ serve(async (req) => {
         
         if (isTask1) {
           const visualTypeToUse = visualType === 'RANDOM'
-            ? ['BAR_CHART', 'LINE_GRAPH', 'PIE_CHART', 'TABLE', 'PROCESS_DIAGRAM'][Math.floor(Math.random() * 5)]
+            ? ['BAR_CHART', 'LINE_GRAPH', 'PIE_CHART', 'TABLE', 'PROCESS_DIAGRAM', 'MAP'][Math.floor(Math.random() * 6)]
             : visualType;
+          
+          // Build type-specific visualData examples based on visual type
+          let visualDataExample: string;
+          let typeSpecificInstructions: string;
+          
+          switch (visualTypeToUse) {
+            case 'PROCESS_DIAGRAM':
+              visualDataExample = `{
+    "type": "PROCESS_DIAGRAM",
+    "title": "Process Title",
+    "steps": [
+      { "label": "Step 1: Raw materials collected", "description": "Optional detail" },
+      { "label": "Step 2: Materials processed", "description": "Optional detail" },
+      { "label": "Step 3: Quality check", "description": "Optional detail" },
+      { "label": "Step 4: Final product", "description": "Optional detail" }
+    ]
+  }`;
+              typeSpecificInstructions = `Create a process/cycle diagram with 4-8 steps. Each step must have a clear "label" field. The "description" field is optional but helpful.`;
+              break;
+            case 'MAP':
+              visualDataExample = `{
+    "type": "MAP",
+    "title": "Town Centre Development",
+    "subtitle": "Changes between 1990 and 2020",
+    "mapData": {
+      "before": {
+        "year": "1990",
+        "features": [
+          { "label": "Town Hall", "type": "building", "position": "center" },
+          { "label": "Main Street", "type": "road", "position": "north-south" },
+          { "label": "Old Park", "type": "park", "position": "east" }
+        ]
+      },
+      "after": {
+        "year": "2020",
+        "features": [
+          { "label": "Town Hall", "type": "building", "position": "center" },
+          { "label": "Main Street", "type": "road", "position": "north-south" },
+          { "label": "Shopping Mall", "type": "building", "position": "east" },
+          { "label": "New Car Park", "type": "other", "position": "south" }
+        ]
+      }
+    }
+  }`;
+              typeSpecificInstructions = `Create a map comparison showing changes over time. Include "before" and "after" sections with features (buildings, roads, parks, water bodies). Use position words like "north", "south", "center", "east", "west", "north-east" etc.`;
+              break;
+            case 'TABLE':
+              visualDataExample = `{
+    "type": "TABLE",
+    "title": "Table Title",
+    "headers": ["Category", "2010", "2015", "2020"],
+    "rows": [
+      [{ "value": "Item A" }, { "value": 25 }, { "value": 30 }, { "value": 35 }],
+      [{ "value": "Item B" }, { "value": 40 }, { "value": 38 }, { "value": 42 }],
+      [{ "value": "Item C" }, { "value": 15 }, { "value": 20 }, { "value": 28 }]
+    ]
+  }`;
+              typeSpecificInstructions = `Create a data table with 3-5 rows and 3-5 columns of numeric data showing trends or comparisons.`;
+              break;
+            case 'LINE_GRAPH':
+              visualDataExample = `{
+    "type": "LINE_GRAPH",
+    "title": "Graph Title",
+    "xAxisLabel": "Year",
+    "yAxisLabel": "Percentage (%)",
+    "series": [
+      { "name": "Category A", "data": [{ "x": "2000", "y": 20 }, { "x": "2005", "y": 35 }, { "x": "2010", "y": 45 }] },
+      { "name": "Category B", "data": [{ "x": "2000", "y": 40 }, { "x": "2005", "y": 38 }, { "x": "2010", "y": 50 }] }
+    ]
+  }`;
+              typeSpecificInstructions = `Create a line graph with 2-4 series showing trends over 4-6 time points. Use percentages (0-100) or realistic numbers.`;
+              break;
+            case 'PIE_CHART':
+              visualDataExample = `{
+    "type": "PIE_CHART",
+    "title": "Pie Chart Title",
+    "data": [
+      { "label": "Category A", "value": 35 },
+      { "label": "Category B", "value": 25 },
+      { "label": "Category C", "value": 20 },
+      { "label": "Category D", "value": 15 },
+      { "label": "Other", "value": 5 }
+    ]
+  }`;
+              typeSpecificInstructions = `Create a pie chart with 4-6 segments. Values must add up to 100 (percentages).`;
+              break;
+            case 'BAR_CHART':
+            default:
+              visualDataExample = `{
+    "type": "BAR_CHART",
+    "title": "Chart Title",
+    "xAxisLabel": "Categories",
+    "yAxisLabel": "Percentage (%)",
+    "data": [
+      { "label": "Category A", "value": 45 },
+      { "label": "Category B", "value": 32 },
+      { "label": "Category C", "value": 28 },
+      { "label": "Category D", "value": 55 }
+    ]
+  }`;
+              typeSpecificInstructions = `Create a bar chart with 4-8 bars. Use percentages (0-100) or realistic whole numbers.`;
+              break;
+          }
             
-          writingPrompt = `You are a data analyst. Generate an IELTS Academic Writing Task 1 with BOTH the essay question AND the chart data.
+          writingPrompt = `You are a data analyst. Generate an IELTS Academic Writing Task 1 with BOTH the essay question AND the chart/diagram data.
 
 Topic: ${topic}
 Difficulty: ${difficulty}
 Visual Type: ${visualTypeToUse}
 
 CRITICAL INSTRUCTIONS:
-1. Create a realistic ${visualTypeToUse.replace(/_/g, ' ').toLowerCase()} with specific numeric data
+1. ${typeSpecificInstructions}
 2. The instruction must start with "The ${visualTypeToUse.replace(/_/g, ' ').toLowerCase()} below shows..."
 3. Include: "Summarise the information by selecting and reporting the main features, and make comparisons where relevant."
 4. End with: "Write at least 150 words."
@@ -2072,12 +2175,12 @@ CRITICAL INSTRUCTIONS:
 Return this EXACT JSON structure:
 {
   "task_type": "task1",
-  "instruction": "The chart below shows [specific description]. Summarise the information. Write at least 150 words.",
+  "instruction": "The ${visualTypeToUse.replace(/_/g, ' ').toLowerCase()} below shows [specific description]. Summarise the information by selecting and reporting the main features, and make comparisons where relevant. Write at least 150 words.",
   "visual_type": "${visualTypeToUse}",
-  "visualData": { "type": "${visualTypeToUse}", "title": "Chart Title", "data": [] }
+  "visualData": ${visualDataExample}
 }
 
-IMPORTANT: Use whole numbers. Keep all labels under 15 characters.`;
+IMPORTANT: Use whole numbers. Keep all labels under 15 characters. Ensure visualData matches the exact structure shown above.`;
         } else {
           const essayTypeToUse = essayType === 'RANDOM'
             ? ['OPINION', 'DISCUSSION', 'PROBLEM_SOLUTION', 'ADVANTAGES_DISADVANTAGES', 'TWO_PART_QUESTION'][Math.floor(Math.random() * 5)]
