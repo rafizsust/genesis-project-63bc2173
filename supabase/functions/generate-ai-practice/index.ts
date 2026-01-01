@@ -4,7 +4,7 @@ import { crypto } from "https://deno.land/std@0.168.0/crypto/mod.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-gemini-api-key',
 };
 
 // Decrypt user's Gemini API key
@@ -1589,45 +1589,68 @@ serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     );
 
-    // Get user's API key
-    const { data: secretData } = await supabaseClient
-      .from('user_secrets')
-      .select('encrypted_value')
-      .eq('user_id', user.id)
-      .eq('secret_name', 'GEMINI_API_KEY')
-      .single();
+    // Parse request body first to check for userApiKey
+    const body = await req.json();
+    const { module, questionType, difficulty, topicPreference, questionCount, timeMinutes, readingConfig, listeningConfig, writingConfig, skipPreflight, save_to_bank, userApiKey } = body;
 
-    // Also fetch DB-managed API keys for rotation
-    const dbApiKeys = await getActiveGeminiKeys(serviceClient);
-    console.log(`Found ${dbApiKeys.length} DB-managed Gemini keys`);
-
-    let geminiApiKey: string | null = null;
+    // ============ HYBRID KEY PRIORITY SYSTEM ============
+    // Priority 1: User-provided key (header or body) - NO fallback on failure
+    // Priority 2: System pool (DB api_keys table) - with rotation
     
-    if (secretData) {
-      const appEncryptionKey = Deno.env.get('app_encryption_key');
-      if (appEncryptionKey) {
-        geminiApiKey = await decryptApiKey(secretData.encrypted_value, appEncryptionKey);
+    const headerApiKey = req.headers.get('x-gemini-api-key');
+    let geminiApiKey: string | null = null;
+    let isUserProvidedKey = false;
+    let dbApiKeys: ApiKeyRecord[] = [];
+    
+    // Priority 1: Check for user-provided key
+    if (headerApiKey) {
+      console.log('Using user-provided API key from header (Priority 1)');
+      geminiApiKey = headerApiKey;
+      isUserProvidedKey = true;
+    } else if (userApiKey) {
+      console.log('Using user-provided API key from body (Priority 1)');
+      geminiApiKey = userApiKey;
+      isUserProvidedKey = true;
+    } else {
+      // Check user_secrets table for stored encrypted key
+      const { data: secretData } = await supabaseClient
+        .from('user_secrets')
+        .select('encrypted_value')
+        .eq('user_id', user.id)
+        .eq('secret_name', 'GEMINI_API_KEY')
+        .single();
+      
+      if (secretData) {
+        const appEncryptionKey = Deno.env.get('app_encryption_key');
+        if (appEncryptionKey) {
+          geminiApiKey = await decryptApiKey(secretData.encrypted_value, appEncryptionKey);
+          isUserProvidedKey = true;
+          console.log('Using user API key from user_secrets (Priority 1)');
+        }
       }
     }
     
-    // If no user key, try DB keys
-    if (!geminiApiKey && dbApiKeys.length > 0) {
-      geminiApiKey = dbApiKeys[0].key_value;
-      console.log('Using DB-managed API key');
+    // Priority 2: System pool (only if no user key)
+    if (!isUserProvidedKey) {
+      dbApiKeys = await getActiveGeminiKeys(serviceClient);
+      console.log(`No user key found. Using system pool: ${dbApiKeys.length} DB-managed keys (Priority 2)`);
+      
+      if (dbApiKeys.length > 0) {
+        geminiApiKey = dbApiKeys[0].key_value;
+      }
     }
     
     if (!geminiApiKey) {
       return new Response(JSON.stringify({ 
-        error: 'Gemini API key not found. Please add your API key in Settings.' 
+        error: 'No API key available. Please add your Gemini API key in Settings, or contact support if using system keys.' 
       }), {
         status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    // Parse request body
-    const body = await req.json();
-    const { module, questionType, difficulty, topicPreference, questionCount, timeMinutes, readingConfig, listeningConfig, writingConfig, skipPreflight, save_to_bank } = body;
+    console.log(`Key mode: ${isUserProvidedKey ? 'USER_KEY (no fallback)' : 'SYSTEM_POOL (rotation enabled)'}`);
+
     
     const topic = topicPreference || IELTS_TOPICS[Math.floor(Math.random() * IELTS_TOPICS.length)];
     const testId = crypto.randomUUID();
@@ -2160,7 +2183,7 @@ Return ONLY valid JSON:
 
 Generate realistic, ${difficulty}-level questions appropriate for IELTS. Make questions coherent and thematically connected.`;
 
-      const result = await callGemini(geminiApiKey, speakingPrompt);
+      const result = await callGemini(geminiApiKey, speakingPrompt, 2, { dbKeys: dbApiKeys, serviceClient });
       
       // Track tokens used
       const totalTokensUsed = getLastTokensUsed();
@@ -2183,11 +2206,7 @@ Generate realistic, ${difficulty}-level questions appropriate for IELTS. Make qu
         });
       }
       
-      // Update quota tracking
-      const serviceClient = createClient(
-        Deno.env.get('SUPABASE_URL') ?? '',
-        Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-      );
+      // Update quota tracking (uses serviceClient from main handler scope)
       await updateQuotaTracking(serviceClient, user.id, totalTokensUsed);
 
       let parsed;
