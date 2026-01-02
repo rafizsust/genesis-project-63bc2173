@@ -7,7 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
-import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -23,7 +23,17 @@ import {
   Eye,
   Upload,
   ArrowLeft,
+  Volume2,
+  BookOpen,
+  Mic,
+  PenLine,
 } from "lucide-react";
+import { 
+  READING_TOPICS, 
+  LISTENING_TOPICS, 
+  WRITING_TASK2_TOPICS, 
+  SPEAKING_TOPICS_FULL 
+} from "@/lib/ieltsTopics";
 
 interface GenerationJob {
   id: string;
@@ -31,6 +41,8 @@ interface GenerationJob {
   topic: string;
   difficulty: string;
   quantity: number;
+  question_type: string;
+  monologue: boolean;
   status: string;
   success_count: number;
   failure_count: number;
@@ -45,55 +57,108 @@ interface GeneratedTest {
   status: string;
   voice_id: string;
   accent: string;
+  question_type: string;
   is_published: boolean;
   created_at: string;
 }
 
 const MODULES = [
-  { value: "listening", label: "Listening" },
-  { value: "speaking", label: "Speaking" },
-  { value: "reading", label: "Reading" },
-  { value: "writing", label: "Writing" },
+  { value: "reading", label: "Reading", icon: BookOpen },
+  { value: "listening", label: "Listening", icon: Volume2 },
+  { value: "writing", label: "Writing", icon: PenLine },
+  { value: "speaking", label: "Speaking", icon: Mic },
 ];
 
 const DIFFICULTIES = [
-  { value: "easy", label: "Easy (Band 5-6)" },
-  { value: "medium", label: "Medium (Band 6-7)" },
-  { value: "hard", label: "Hard (Band 7-9)" },
+  { value: "easy", label: "Easy (Band 5.5-6.5)" },
+  { value: "medium", label: "Medium (Band 7-8)" },
+  { value: "hard", label: "Hard (Band 8.5-9)" },
 ];
 
-const ACCENTS = [
-  { value: "random", label: "Random (Variety)" },
-  { value: "US", label: "American (US)" },
-  { value: "GB", label: "British (UK)" },
-  { value: "AU", label: "Australian" },
-  { value: "IN", label: "Indian" },
-  { value: "mixed", label: "Mixed (All accents)" },
-];
-
-const TOPICS = {
-  listening: ["Travel", "Education", "Environment", "Technology", "Health", "Culture", "Business", "Science"],
-  speaking: ["Family", "Work", "Hobbies", "Travel", "Education", "Technology", "Environment", "Food"],
-  reading: ["Science", "History", "Technology", "Environment", "Society", "Culture", "Business", "Health"],
-  writing: ["Education", "Environment", "Technology", "Society", "Health", "Work", "Government", "Culture"],
+// Question types by module - matching test taker options
+const QUESTION_TYPES = {
+  reading: [
+    { value: "mixed", label: "Mixed (All Types)" },
+    { value: "TRUE_FALSE_NOT_GIVEN", label: "True/False/Not Given" },
+    { value: "YES_NO_NOT_GIVEN", label: "Yes/No/Not Given" },
+    { value: "MULTIPLE_CHOICE_SINGLE", label: "Multiple Choice (Single)" },
+    { value: "MULTIPLE_CHOICE_MULTIPLE", label: "Multiple Choice (Multiple)" },
+    { value: "MATCHING_HEADINGS", label: "Matching Headings" },
+    { value: "MATCHING_FEATURES", label: "Matching Features" },
+    { value: "MATCHING_INFORMATION", label: "Matching Information" },
+    { value: "MATCHING_SENTENCE_ENDINGS", label: "Matching Sentence Endings" },
+    { value: "SENTENCE_COMPLETION", label: "Sentence Completion" },
+    { value: "SUMMARY_COMPLETION", label: "Summary Completion" },
+    { value: "NOTE_COMPLETION", label: "Note Completion" },
+    { value: "TABLE_COMPLETION", label: "Table Completion" },
+    { value: "FLOWCHART_COMPLETION", label: "Flowchart Completion" },
+    { value: "SHORT_ANSWER", label: "Short Answer" },
+  ],
+  listening: [
+    { value: "mixed", label: "Mixed (All Types)" },
+    { value: "FILL_IN_BLANK", label: "Fill in the Blank" },
+    { value: "MULTIPLE_CHOICE_SINGLE", label: "Multiple Choice (Single)" },
+    { value: "MULTIPLE_CHOICE_MULTIPLE", label: "Multiple Choice (Multiple)" },
+    { value: "MATCHING_CORRECT_LETTER", label: "Matching" },
+    { value: "TABLE_COMPLETION", label: "Table Completion" },
+    { value: "NOTE_COMPLETION", label: "Note Completion" },
+    { value: "FLOWCHART_COMPLETION", label: "Flowchart Completion" },
+    { value: "MAP_LABELING", label: "Map/Plan Labeling" },
+    { value: "DRAG_AND_DROP_OPTIONS", label: "Drag and Drop" },
+  ],
+  writing: [
+    { value: "TASK_1", label: "Task 1 (Data Description)" },
+    { value: "TASK_2", label: "Task 2 (Essay)" },
+  ],
+  speaking: [
+    { value: "FULL_TEST", label: "Full Test (Part 1, 2, 3)" },
+    { value: "PART_1", label: "Part 1 Only" },
+    { value: "PART_2", label: "Part 2 Only" },
+    { value: "PART_3", label: "Part 3 Only" },
+  ],
 };
+
+// Get topics by module
+function getTopicsForModule(module: string): readonly string[] {
+  switch (module) {
+    case "reading":
+      return READING_TOPICS;
+    case "listening":
+      return LISTENING_TOPICS;
+    case "writing":
+      return WRITING_TASK2_TOPICS;
+    case "speaking":
+      return SPEAKING_TOPICS_FULL;
+    default:
+      return [];
+  }
+}
 
 export default function TestFactoryAdmin() {
   const navigate = useNavigate();
   const { isAdmin, loading: adminLoading } = useAdminAccess();
 
-  const [module, setModule] = useState<string>("listening");
+  // Form state
+  const [module, setModule] = useState<string>("reading");
   const [topic, setTopic] = useState<string>("");
-  const [customTopic, setCustomTopic] = useState<string>("");
+  const [questionType, setQuestionType] = useState<string>("mixed");
   const [difficulty, setDifficulty] = useState<string>("medium");
-  const [accent, setAccent] = useState<string>("random");
   const [quantity, setQuantity] = useState<number>(5);
+  const [monologue, setMonologue] = useState<boolean>(false);
   const [isGenerating, setIsGenerating] = useState(false);
 
+  // Jobs state
   const [jobs, setJobs] = useState<GenerationJob[]>([]);
   const [selectedJob, setSelectedJob] = useState<GenerationJob | null>(null);
   const [jobTests, setJobTests] = useState<GeneratedTest[]>([]);
   const [loadingJobs, setLoadingJobs] = useState(true);
+
+  // Reset topic and question type when module changes
+  useEffect(() => {
+    setTopic("");
+    setQuestionType("mixed");
+    setMonologue(false);
+  }, [module]);
 
   // Fetch jobs on mount and set up realtime subscription
   useEffect(() => {
@@ -101,7 +166,6 @@ export default function TestFactoryAdmin() {
 
     fetchJobs();
 
-    // Subscribe to realtime updates for jobs
     const channel = supabase
       .channel("bulk-generation-jobs")
       .on(
@@ -184,9 +248,8 @@ export default function TestFactoryAdmin() {
   };
 
   const startGeneration = async () => {
-    const finalTopic = customTopic || topic;
-    if (!finalTopic) {
-      toast.error("Please select or enter a topic");
+    if (!topic) {
+      toast.error("Please select a topic");
       return;
     }
 
@@ -198,6 +261,19 @@ export default function TestFactoryAdmin() {
         return;
       }
 
+      const payload: Record<string, unknown> = {
+        module,
+        topic,
+        difficulty,
+        quantity,
+        questionType,
+      };
+
+      // Add monologue only for listening
+      if (module === "listening") {
+        payload.monologue = monologue;
+      }
+
       const response = await fetch(
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/bulk-generate-tests`,
         {
@@ -206,13 +282,7 @@ export default function TestFactoryAdmin() {
             Authorization: `Bearer ${session.access_token}`,
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({
-            module,
-            topic: finalTopic,
-            difficulty,
-            quantity,
-            accent: (module === "listening" || module === "speaking") ? accent : undefined,
-          }),
+          body: JSON.stringify(payload),
         }
       );
 
@@ -277,6 +347,24 @@ export default function TestFactoryAdmin() {
     }
   };
 
+  const getModuleIcon = (mod: string) => {
+    switch (mod) {
+      case "reading": return <BookOpen className="h-4 w-4" />;
+      case "listening": return <Volume2 className="h-4 w-4" />;
+      case "writing": return <PenLine className="h-4 w-4" />;
+      case "speaking": return <Mic className="h-4 w-4" />;
+      default: return null;
+    }
+  };
+
+  const formatDuration = (startedAt: string | null, completedAt: string | null) => {
+    if (!startedAt || !completedAt) return null;
+    const duration = new Date(completedAt).getTime() - new Date(startedAt).getTime();
+    const minutes = Math.floor(duration / 60000);
+    const seconds = Math.floor((duration % 60000) / 1000);
+    return `${minutes}m ${seconds}s`;
+  };
+
   if (adminLoading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -297,6 +385,9 @@ export default function TestFactoryAdmin() {
     );
   }
 
+  const topics = getTopicsForModule(module);
+  const questionTypes = QUESTION_TYPES[module as keyof typeof QUESTION_TYPES] || [];
+
   return (
     <div className="min-h-screen bg-background p-6">
       <div className="max-w-7xl mx-auto space-y-6">
@@ -309,9 +400,9 @@ export default function TestFactoryAdmin() {
             <div>
               <h1 className="text-3xl font-bold flex items-center gap-2">
                 <Factory className="h-8 w-8" />
-                Test Factory
+                AI Test Factory
               </h1>
-              <p className="text-muted-foreground">Bulk generate IELTS tests with audio</p>
+              <p className="text-muted-foreground">Bulk generate AI practice tests for the test bank</p>
             </div>
           </div>
           <Button variant="outline" onClick={fetchJobs}>
@@ -338,7 +429,10 @@ export default function TestFactoryAdmin() {
                   <SelectContent>
                     {MODULES.map((m) => (
                       <SelectItem key={m.value} value={m.value}>
-                        {m.label}
+                        <div className="flex items-center gap-2">
+                          <m.icon className="h-4 w-4" />
+                          {m.label}
+                        </div>
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -348,25 +442,35 @@ export default function TestFactoryAdmin() {
               {/* Topic Selection */}
               <div className="space-y-2">
                 <Label>Topic</Label>
-                <Select value={topic} onValueChange={(v) => { setTopic(v); setCustomTopic(""); }}>
+                <Select value={topic} onValueChange={setTopic}>
                   <SelectTrigger>
                     <SelectValue placeholder="Select a topic" />
                   </SelectTrigger>
                   <SelectContent>
-                    {TOPICS[module as keyof typeof TOPICS]?.map((t) => (
+                    {topics.map((t) => (
                       <SelectItem key={t} value={t}>
                         {t}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
-                <div className="relative">
-                  <Input
-                    placeholder="Or enter custom topic..."
-                    value={customTopic}
-                    onChange={(e) => { setCustomTopic(e.target.value); setTopic(""); }}
-                  />
-                </div>
+              </div>
+
+              {/* Question Type Selection */}
+              <div className="space-y-2">
+                <Label>Question Type</Label>
+                <Select value={questionType} onValueChange={setQuestionType}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {questionTypes.map((qt) => (
+                      <SelectItem key={qt.value} value={qt.value}>
+                        {qt.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
 
               {/* Difficulty Selection */}
@@ -386,27 +490,19 @@ export default function TestFactoryAdmin() {
                 </Select>
               </div>
 
-              {/* Accent Selection (only for listening/speaking) */}
-              {(module === "listening" || module === "speaking") && (
-                <div className="space-y-2">
-                  <Label>Accent Variety</Label>
-                  <Select value={accent} onValueChange={setAccent}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {ACCENTS.map((a) => (
-                        <SelectItem key={a.value} value={a.value}>
-                          {a.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <p className="text-xs text-muted-foreground">
-                    {accent === "random" && "Each test gets a random accent"}
-                    {accent === "mixed" && "Distribute all accents evenly across tests"}
-                    {accent !== "random" && accent !== "mixed" && `All tests will use ${accent} accent`}
-                  </p>
+              {/* Monologue Toggle (Listening only) */}
+              {module === "listening" && (
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <Label>Monologue Mode</Label>
+                    <p className="text-xs text-muted-foreground">
+                      Single speaker (like IELTS Part 4)
+                    </p>
+                  </div>
+                  <Switch
+                    checked={monologue}
+                    onCheckedChange={setMonologue}
+                  />
                 </div>
               )}
 
@@ -420,12 +516,29 @@ export default function TestFactoryAdmin() {
                   value={[quantity]}
                   onValueChange={(v) => setQuantity(v[0])}
                   min={1}
-                  max={20}
+                  max={50}
                   step={1}
                 />
                 <p className="text-xs text-muted-foreground">
-                  Generate 1-20 tests at once
+                  Generate 1-50 tests at once
                 </p>
+              </div>
+
+              {/* Fixed Parameters Info */}
+              <div className="bg-muted/50 rounded-lg p-3 space-y-1 text-sm">
+                <p className="font-medium">Fixed Parameters:</p>
+                {module === "reading" && (
+                  <p className="text-muted-foreground">• 7 questions, 4 paragraphs</p>
+                )}
+                {module === "listening" && (
+                  <p className="text-muted-foreground">• 7 questions, ~4 min audio</p>
+                )}
+                {module === "writing" && (
+                  <p className="text-muted-foreground">• Standard IELTS task format</p>
+                )}
+                {module === "speaking" && (
+                  <p className="text-muted-foreground">• Audio for all questions</p>
+                )}
               </div>
 
               {/* Start Button */}
@@ -433,7 +546,7 @@ export default function TestFactoryAdmin() {
                 className="w-full"
                 size="lg"
                 onClick={startGeneration}
-                disabled={isGenerating || (!topic && !customTopic)}
+                disabled={isGenerating || !topic}
               >
                 {isGenerating ? (
                   <>
@@ -443,7 +556,7 @@ export default function TestFactoryAdmin() {
                 ) : (
                   <>
                     <Play className="h-5 w-5 mr-2" />
-                    Start Generation
+                    Start Generation ({quantity} tests)
                   </>
                 )}
               </Button>
@@ -454,7 +567,7 @@ export default function TestFactoryAdmin() {
           <Card className="lg:col-span-2">
             <CardHeader>
               <CardTitle>Generation Jobs</CardTitle>
-              <CardDescription>Monitor your bulk generation jobs</CardDescription>
+              <CardDescription>Monitor your bulk generation jobs (AI Tests only)</CardDescription>
             </CardHeader>
             <CardContent>
               <ScrollArea className="h-[500px]">
@@ -479,10 +592,19 @@ export default function TestFactoryAdmin() {
                         <CardContent className="p-4">
                           <div className="flex items-center justify-between mb-2">
                             <div className="flex items-center gap-2">
+                              {getModuleIcon(job.module)}
                               <Badge variant="outline" className="capitalize">
                                 {job.module}
                               </Badge>
                               <span className="font-medium">{job.topic}</span>
+                              {job.question_type && job.question_type !== "mixed" && (
+                                <Badge variant="secondary" className="text-xs">
+                                  {job.question_type.replace(/_/g, " ")}
+                                </Badge>
+                              )}
+                              {job.monologue && (
+                                <Badge variant="outline" className="text-xs">Monologue</Badge>
+                              )}
                             </div>
                             {getStatusBadge(job.status)}
                           </div>
@@ -511,6 +633,11 @@ export default function TestFactoryAdmin() {
                                   {job.failure_count} failed
                                 </span>
                               )}
+                              {formatDuration(job.started_at, job.completed_at) && (
+                                <span className="text-muted-foreground">
+                                  {formatDuration(job.started_at, job.completed_at)}
+                                </span>
+                              )}
                             </div>
                           )}
                         </CardContent>
@@ -529,9 +656,15 @@ export default function TestFactoryAdmin() {
             <CardHeader>
               <div className="flex items-center justify-between">
                 <div>
-                  <CardTitle>Job Details: {selectedJob.topic}</CardTitle>
+                  <CardTitle className="flex items-center gap-2">
+                    {getModuleIcon(selectedJob.module)}
+                    Job Details: {selectedJob.topic}
+                  </CardTitle>
                   <CardDescription>
-                    Generated tests for {selectedJob.module} module
+                    Generated {selectedJob.module} tests • {selectedJob.difficulty} difficulty
+                    {selectedJob.question_type && selectedJob.question_type !== "mixed" && (
+                      <> • {selectedJob.question_type.replace(/_/g, " ")}</>
+                    )}
                   </CardDescription>
                 </div>
                 <div className="flex gap-2">
@@ -564,8 +697,11 @@ export default function TestFactoryAdmin() {
                           </Badge>
                         </div>
                         <div className="text-sm text-muted-foreground mb-3">
-                          <p>Voice: {test.voice_id}</p>
-                          <p>Accent: {test.accent}</p>
+                          {test.voice_id && <p>Voice: {test.voice_id}</p>}
+                          {test.accent && <p>Accent: {test.accent}</p>}
+                          {test.question_type && (
+                            <p>Type: {test.question_type.replace(/_/g, " ")}</p>
+                          )}
                           <p>Status: {test.status}</p>
                         </div>
                         <div className="flex gap-2">
@@ -591,11 +727,38 @@ export default function TestFactoryAdmin() {
                 </div>
               )}
 
+              {/* Generation Summary */}
+              {selectedJob.status === "completed" && (
+                <div className="mt-6 bg-muted/50 rounded-lg p-4">
+                  <h4 className="font-medium mb-2">Generation Summary</h4>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                    <div>
+                      <p className="text-muted-foreground">Requested</p>
+                      <p className="font-medium text-lg">{selectedJob.quantity}</p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground">Successful</p>
+                      <p className="font-medium text-lg text-green-500">{selectedJob.success_count}</p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground">Failed</p>
+                      <p className="font-medium text-lg text-red-500">{selectedJob.failure_count}</p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground">Duration</p>
+                      <p className="font-medium text-lg">
+                        {formatDuration(selectedJob.started_at, selectedJob.completed_at) || "N/A"}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Error Log */}
               {selectedJob.error_log && selectedJob.error_log.length > 0 && (
                 <div className="mt-6">
                   <h4 className="font-medium mb-2 text-destructive">Error Log</h4>
-                  <div className="bg-destructive/10 rounded-lg p-4 space-y-2">
+                  <div className="bg-destructive/10 rounded-lg p-4 space-y-2 max-h-48 overflow-y-auto">
                     {selectedJob.error_log.map((err, i) => (
                       <div key={i} className="text-sm">
                         <span className="font-medium">Test #{err.index + 1}:</span>{" "}

@@ -211,7 +211,9 @@ export type Database = {
           failure_count: number
           id: string
           module: string
+          monologue: boolean | null
           quantity: number
+          question_type: string | null
           started_at: string | null
           status: string
           success_count: number
@@ -227,7 +229,9 @@ export type Database = {
           failure_count?: number
           id?: string
           module: string
+          monologue?: boolean | null
           quantity: number
+          question_type?: string | null
           started_at?: string | null
           status?: string
           success_count?: number
@@ -243,7 +247,9 @@ export type Database = {
           failure_count?: number
           id?: string
           module?: string
+          monologue?: boolean | null
           quantity?: number
+          question_type?: string | null
           started_at?: string | null
           status?: string
           success_count?: number
@@ -378,6 +384,7 @@ export type Database = {
           job_id: string | null
           last_used_at: string | null
           module: string
+          question_type: string | null
           sample_audio_url: string | null
           status: string
           times_used: number
@@ -398,6 +405,7 @@ export type Database = {
           job_id?: string | null
           last_used_at?: string | null
           module: string
+          question_type?: string | null
           sample_audio_url?: string | null
           status?: string
           times_used?: number
@@ -418,6 +426,7 @@ export type Database = {
           job_id?: string | null
           last_used_at?: string | null
           module?: string
+          question_type?: string | null
           sample_audio_url?: string | null
           status?: string
           times_used?: number

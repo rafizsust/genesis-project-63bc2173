@@ -6,7 +6,7 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-// Available TTS voices with accents for Listening tests
+// Available TTS voices with accents
 const TTS_VOICES = {
   US: ["Kore", "Charon", "Fenrir"],
   GB: ["Kore", "Aoede", "Puck"],
@@ -25,14 +25,6 @@ function getRandomVoice(preferredAccent?: string): { voiceName: string; accent: 
     accent = ALL_ACCENTS[Math.floor(Math.random() * ALL_ACCENTS.length)];
   }
   
-  const voices = TTS_VOICES[accent];
-  const voiceName = voices[Math.floor(Math.random() * voices.length)];
-  return { voiceName, accent };
-}
-
-function getVoiceForMixedAccent(index: number): { voiceName: string; accent: string } {
-  const accentIndex = index % ALL_ACCENTS.length;
-  const accent = ALL_ACCENTS[accentIndex];
   const voices = TTS_VOICES[accent];
   const voiceName = voices[Math.floor(Math.random() * voices.length)];
   return { voiceName, accent };
@@ -92,6 +84,7 @@ serve(async (req) => {
       });
     }
 
+    // Admin check
     const { data: adminCheck } = await supabase
       .from("admin_users")
       .select("id")
@@ -105,8 +98,9 @@ serve(async (req) => {
       });
     }
 
-    const { module, topic, difficulty, quantity, accent } = await req.json();
+    const { module, topic, difficulty, quantity, questionType, monologue } = await req.json();
 
+    // Validation
     if (!module || !topic || !difficulty || !quantity) {
       return new Response(JSON.stringify({ error: "Missing required fields" }), {
         status: 400,
@@ -128,13 +122,14 @@ serve(async (req) => {
       });
     }
 
-    if (quantity < 1 || quantity > 20) {
-      return new Response(JSON.stringify({ error: "Quantity must be 1-20" }), {
+    if (quantity < 1 || quantity > 50) {
+      return new Response(JSON.stringify({ error: "Quantity must be 1-50" }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
+    // Create job record
     const { data: job, error: jobError } = await supabase
       .from("bulk_generation_jobs")
       .insert({
@@ -143,6 +138,8 @@ serve(async (req) => {
         topic,
         difficulty,
         quantity,
+        question_type: questionType || "mixed",
+        monologue: monologue || false,
         status: "pending",
       })
       .select()
@@ -156,8 +153,27 @@ serve(async (req) => {
       });
     }
 
-    // Start background processing
-    processGenerationJob(supabase, job.id, module, topic, difficulty, quantity, accent).catch(console.error);
+    console.log(`[Job ${job.id}] Created job for ${quantity} ${module} tests`);
+
+    // Start background processing using EdgeRuntime.waitUntil
+    const processingPromise = processGenerationJob(
+      supabase, 
+      job.id, 
+      module, 
+      topic, 
+      difficulty, 
+      quantity, 
+      questionType || "mixed",
+      monologue || false
+    );
+    
+    // Use EdgeRuntime.waitUntil if available for background processing
+    if (typeof EdgeRuntime !== "undefined" && EdgeRuntime.waitUntil) {
+      EdgeRuntime.waitUntil(processingPromise);
+    } else {
+      // Fallback: don't await, let it run in background
+      processingPromise.catch(console.error);
+    }
 
     return new Response(
       JSON.stringify({
@@ -176,6 +192,7 @@ serve(async (req) => {
   }
 });
 
+// Main processing function
 async function processGenerationJob(
   supabase: any,
   jobId: string,
@@ -183,9 +200,10 @@ async function processGenerationJob(
   topic: string,
   difficulty: string,
   quantity: number,
-  accentPreference?: string
+  questionType: string,
+  monologue: boolean
 ) {
-  console.log(`[Job ${jobId}] Starting generation of ${quantity} ${module} tests`);
+  console.log(`[Job ${jobId}] Starting generation of ${quantity} ${module} tests (type: ${questionType}, monologue: ${monologue})`);
 
   await supabase
     .from("bulk_generation_jobs")
@@ -196,50 +214,50 @@ async function processGenerationJob(
   let failureCount = 0;
   const errorLog: Array<{ index: number; error: string }> = [];
 
+  // If mixed question type, rotate through available types
+  const questionTypes = getQuestionTypesForModule(module, questionType);
+
   for (let i = 0; i < quantity; i++) {
     try {
       console.log(`[Job ${jobId}] Processing test ${i + 1}/${quantity}`);
       
-      const { voiceName, accent } = accentPreference === "mixed" 
-        ? getVoiceForMixedAccent(i)
-        : getRandomVoice(accentPreference);
+      const { voiceName, accent } = getRandomVoice();
+      const currentQuestionType = questionTypes[i % questionTypes.length];
       
-      // Generate content with retry
-      const content = await withRetry(() => generateContent(module, topic, difficulty), 3, 2000);
+      // Generate content using the same prompts as generate-ai-practice
+      const content = await withRetry(
+        () => generateContent(module, topic, difficulty, currentQuestionType, monologue),
+        3,
+        2000
+      );
       
       if (!content) {
         throw new Error("Content generation failed - empty response");
       }
 
       let audioUrl: string | null = null;
-      let sampleAudioUrl: string | null = null;
 
-      // LISTENING: Generate audio using Gemini TTS with retry
+      // LISTENING: Generate audio
       if (module === "listening") {
-        const scriptText = content.script || 
-          content.questions?.map((q: any) => q.text).join(". ") || 
-          "";
+        const scriptText = content.dialogue || content.script || "";
         
         if (scriptText.trim()) {
           try {
             audioUrl = await withRetry(
-              () => generateAndUploadGeminiAudio(scriptText, voiceName, jobId, i),
+              () => generateAndUploadAudio(scriptText, voiceName, monologue, jobId, i),
               3,
               3000
             );
           } catch (audioError) {
             console.error(`[Job ${jobId}] Listening audio failed for test ${i + 1}:`, audioError);
-            // For Listening: DISCARD if audio fails (per requirements)
+            // For Listening: DISCARD if audio fails
             throw new Error(`Audio generation failed: ${audioError instanceof Error ? audioError.message : "Unknown"}`);
           }
         }
       }
 
       // SPEAKING: Generate audio for instructions and questions
-      // Uses Edge TTS (free) as primary, Gemini TTS as fallback
       if (module === "speaking") {
-        console.log(`[Job ${jobId}] Speaking test - generating audio for instructions/questions`);
-        
         try {
           const speakingAudioUrls = await withRetry(
             () => generateSpeakingAudio(content, voiceName, jobId, i),
@@ -247,13 +265,11 @@ async function processGenerationJob(
             2000
           );
           
-          // Store audio URLs in content
           if (speakingAudioUrls) {
             content.audioUrls = speakingAudioUrls;
           }
         } catch (audioError) {
           console.warn(`[Job ${jobId}] Speaking audio generation failed, will use browser TTS fallback:`, audioError);
-          // Speaking tests can still work with browser TTS fallback, don't fail the test
           content.audioUrls = null;
           content.useBrowserTTS = true;
         }
@@ -265,12 +281,12 @@ async function processGenerationJob(
         module,
         topic,
         difficulty,
+        question_type: currentQuestionType,
         voice_id: voiceName,
         accent,
         content_payload: content,
         audio_url: audioUrl,
-        sample_audio_url: sampleAudioUrl,
-        transcript: content.script || null,
+        transcript: content.dialogue || content.script || null,
         status: module === "listening" && !audioUrl ? "failed" : "ready",
         is_published: false,
       };
@@ -325,78 +341,54 @@ async function processGenerationJob(
   console.log(`[Job ${jobId}] Completed: ${successCount} success, ${failureCount} failed`);
 }
 
-async function generateContent(module: string, topic: string, difficulty: string) {
+// Get question types for rotation
+function getQuestionTypesForModule(module: string, selectedType: string): string[] {
+  if (selectedType !== "mixed") {
+    return [selectedType];
+  }
+
+  switch (module) {
+    case "reading":
+      return [
+        "TRUE_FALSE_NOT_GIVEN",
+        "MULTIPLE_CHOICE_SINGLE",
+        "MATCHING_HEADINGS",
+        "SENTENCE_COMPLETION",
+        "SUMMARY_COMPLETION",
+        "SHORT_ANSWER",
+      ];
+    case "listening":
+      return [
+        "FILL_IN_BLANK",
+        "MULTIPLE_CHOICE_SINGLE",
+        "TABLE_COMPLETION",
+        "NOTE_COMPLETION",
+        "MATCHING_CORRECT_LETTER",
+      ];
+    case "writing":
+      return ["TASK_1", "TASK_2"];
+    case "speaking":
+      return ["FULL_TEST"];
+    default:
+      return ["mixed"];
+  }
+}
+
+// Generate content using Lovable AI Gateway
+async function generateContent(
+  module: string,
+  topic: string,
+  difficulty: string,
+  questionType: string,
+  monologue: boolean
+): Promise<any> {
   const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
   
   if (!LOVABLE_API_KEY) {
     throw new Error("LOVABLE_API_KEY not configured");
   }
 
-  const prompts: Record<string, string> = {
-    listening: `Generate an IELTS ${difficulty} difficulty Listening test about "${topic}".
-
-Include:
-1. A natural dialogue or monologue script (300-500 words) with natural pauses marked as "..." or [pause]
-2. 10 questions based on the script (mix of multiple choice, fill-in-blank, matching)
-3. Answer keys for all questions
-
-Format as JSON:
-{
-  "script": "The full script with natural pauses...",
-  "questions": [
-    { "number": 1, "type": "multiple_choice", "text": "Question text", "options": ["A", "B", "C", "D"], "answer": "B" }
-  ]
-}`,
-
-    speaking: `Generate an IELTS ${difficulty} difficulty Speaking test about "${topic}".
-
-Format as JSON:
-{
-  "part1": {
-    "questions": ["Question 1", "Question 2", "Question 3", "Question 4"],
-    "sampleAnswers": ["Sample answer 1", "Sample answer 2", "Sample answer 3", "Sample answer 4"]
-  },
-  "part2": {
-    "cueCard": "Describe a [topic]...\\nYou should say:\\n- point 1\\n- point 2\\n- point 3\\nAnd explain why...",
-    "sampleAnswer": "A model answer (200-250 words)..."
-  },
-  "part3": {
-    "questions": ["Discussion question 1", "Discussion question 2", "Discussion question 3"],
-    "sampleAnswers": ["Sample answer 1", "Sample answer 2", "Sample answer 3"]
-  }
-}`,
-
-    reading: `Generate an IELTS ${difficulty} difficulty Reading passage about "${topic}".
-
-Include:
-1. A passage (600-900 words) suitable for academic reading
-2. 13 questions (mix of True/False/Not Given, matching headings, fill-in-blank)
-3. Answer keys
-
-Format as JSON:
-{
-  "title": "Passage title",
-  "passage": "The full passage text...",
-  "questions": [
-    { "number": 1, "type": "tfng", "text": "Statement", "answer": "TRUE" }
-  ]
-}`,
-
-    writing: `Generate an IELTS ${difficulty} difficulty Writing task about "${topic}".
-
-Format as JSON:
-{
-  "task1": {
-    "instruction": "The chart below shows...",
-    "description": "Description of what to analyze",
-    "modelAnswer": "A band 8-9 sample answer..."
-  },
-  "task2": {
-    "instruction": "Some people believe that... To what extent do you agree or disagree?",
-    "modelAnswer": "A band 8-9 sample essay..."
-  }
-}`,
-  };
+  const prompt = getPromptForModule(module, topic, difficulty, questionType, monologue);
 
   const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
     method: "POST",
@@ -411,7 +403,7 @@ Format as JSON:
           role: "system",
           content: "You are an expert IELTS test creator. Generate high-quality, authentic exam content. Always respond with valid JSON only, no markdown code blocks.",
         },
-        { role: "user", content: prompts[module] },
+        { role: "user", content: prompt },
       ],
     }),
   });
@@ -428,7 +420,7 @@ Format as JSON:
     throw new Error("Empty AI response");
   }
 
-  // Parse JSON from response (handle potential markdown wrapping)
+  // Parse JSON from response
   let jsonContent = contentText;
   if (contentText.includes("```json")) {
     jsonContent = contentText.replace(/```json\n?/g, "").replace(/```\n?/g, "");
@@ -444,158 +436,317 @@ Format as JSON:
   }
 }
 
-// Generate speaking audio for instructions and questions
-// Uses Edge TTS (free) as primary, Gemini TTS as fallback
-async function generateSpeakingAudio(
-  content: any,
-  voiceName: string,
-  jobId: string,
-  index: number
-): Promise<Record<string, string> | null> {
-  const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-  const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-  
-  const audioUrls: Record<string, string> = {};
-  const ttsItems: Array<{ key: string; text: string }> = [];
-  
-  // Collect all texts that need TTS
-  // Part 1 instruction + questions
-  if (content.part1) {
-    if (content.part1.instruction) {
-      ttsItems.push({ key: "part1_instruction", text: content.part1.instruction });
-    }
-    content.part1.questions?.forEach((q: string, idx: number) => {
-      ttsItems.push({ key: `part1_q${idx + 1}`, text: q });
-    });
-  }
-  
-  // Part 2 instruction + cue card
-  if (content.part2) {
-    const part2Instruction = "Now, I'm going to give you a topic and I'd like you to talk about it for one to two minutes. Before you talk, you'll have one minute to think about what you're going to say. You can make some notes if you wish.";
-    ttsItems.push({ key: "part2_instruction", text: part2Instruction });
-    
-    if (content.part2.cueCard) {
-      const cueCardLines = content.part2.cueCard.split('\n');
-      const topic = cueCardLines[0]?.replace(/^Describe\s+/i, '') || content.part2.cueCard;
-      ttsItems.push({ key: "part2_cuecard_topic", text: `Your topic is: ${topic}` });
-    }
-    
-    ttsItems.push({ 
-      key: "part2_start_speaking", 
-      text: "Your one minute preparation time is over. Please start speaking now. You have two minutes." 
-    });
-  }
-  
-  // Part 3 instruction + questions
-  if (content.part3) {
-    const part3Instruction = "We've been talking about the topic from Part 2. Now I'd like to discuss with you some more general questions related to this.";
-    ttsItems.push({ key: "part3_instruction", text: part3Instruction });
-    
-    content.part3.questions?.forEach((q: string, idx: number) => {
-      ttsItems.push({ key: `part3_q${idx + 1}`, text: q });
-    });
-  }
-  
-  // Ending message
-  ttsItems.push({ 
-    key: "test_ending", 
-    text: "Thank you. That is the end of the speaking test." 
-  });
-  
-  if (ttsItems.length === 0) {
-    return null;
-  }
-  
-  console.log(`[Job ${jobId}] Generating audio for ${ttsItems.length} speaking items`);
-  
-  // Try Edge TTS first (free)
-  try {
-    const edgeResponse = await fetch(`${supabaseUrl}/functions/v1/generate-edge-tts`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${supabaseServiceKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        items: ttsItems,
-        accent: "GB",
-      }),
-    });
-    
-    if (edgeResponse.ok) {
-      const edgeData = await edgeResponse.json();
-      
-      if (edgeData.success && edgeData.clips?.length > 0) {
-        const { uploadToR2 } = await import("../_shared/r2Client.ts");
-        
-        for (const clip of edgeData.clips) {
-          const audioBytes = Uint8Array.from(atob(clip.audioBase64), c => c.charCodeAt(0));
-          const key = `speaking-tests/${jobId}/${index}/${clip.key}.mp3`;
-          
-          const uploadResult = await uploadToR2(key, audioBytes, "audio/mpeg");
-          if (uploadResult.success && uploadResult.url) {
-            audioUrls[clip.key] = uploadResult.url;
-          }
-        }
-        
-        console.log(`[Job ${jobId}] Edge TTS generated ${Object.keys(audioUrls).length} audio files`);
-        return Object.keys(audioUrls).length > 0 ? audioUrls : null;
-      }
-    }
-    
-    console.warn(`[Job ${jobId}] Edge TTS failed, trying Gemini TTS fallback`);
-  } catch (edgeErr) {
-    console.warn(`[Job ${jobId}] Edge TTS error:`, edgeErr);
-  }
-  
-  // Fallback to Gemini TTS
-  try {
-    const geminiResponse = await fetch(`${supabaseUrl}/functions/v1/generate-gemini-tts`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${supabaseServiceKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        items: ttsItems,
-        voiceName,
-      }),
-    });
-    
-    if (!geminiResponse.ok) {
-      throw new Error(`Gemini TTS failed: ${geminiResponse.status}`);
-    }
-    
-    const geminiData = await geminiResponse.json();
-    
-    if (!geminiData.success || !geminiData.clips?.length) {
-      throw new Error("No audio from Gemini TTS");
-    }
-    
-    const { uploadToR2 } = await import("../_shared/r2Client.ts");
-    
-    for (const clip of geminiData.clips) {
-      const pcmBytes = Uint8Array.from(atob(clip.audioBase64), c => c.charCodeAt(0));
-      const wavBytes = createWavFromPcm(pcmBytes, clip.sampleRate || 24000);
-      const key = `speaking-tests/${jobId}/${index}/${clip.key}.wav`;
-      
-      const uploadResult = await uploadToR2(key, wavBytes, "audio/wav");
-      if (uploadResult.success && uploadResult.url) {
-        audioUrls[clip.key] = uploadResult.url;
-      }
-    }
-    
-    console.log(`[Job ${jobId}] Gemini TTS fallback generated ${Object.keys(audioUrls).length} audio files`);
-    return Object.keys(audioUrls).length > 0 ? audioUrls : null;
-  } catch (geminiErr) {
-    console.error(`[Job ${jobId}] Gemini TTS fallback also failed:`, geminiErr);
-    throw geminiErr;
+// Get prompt based on module and question type
+function getPromptForModule(
+  module: string,
+  topic: string,
+  difficulty: string,
+  questionType: string,
+  monologue: boolean
+): string {
+  const difficultyDesc = difficulty === "easy" ? "Band 5.5-6.5" : difficulty === "medium" ? "Band 7-8" : "Band 8.5-9";
+  const questionCount = 7; // Fixed per requirements
+  const paragraphCount = 4; // Fixed per requirements
+
+  switch (module) {
+    case "reading":
+      return getReadingPrompt(topic, difficultyDesc, questionType, questionCount, paragraphCount);
+    case "listening":
+      return getListeningPrompt(topic, difficultyDesc, questionType, questionCount, monologue);
+    case "writing":
+      return getWritingPrompt(topic, difficultyDesc, questionType);
+    case "speaking":
+      return getSpeakingPrompt(topic, difficultyDesc, questionType);
+    default:
+      throw new Error(`Unknown module: ${module}`);
   }
 }
 
-async function generateAndUploadGeminiAudio(
+function getReadingPrompt(topic: string, difficulty: string, questionType: string, questionCount: number, paragraphCount: number): string {
+  const paragraphLabels = Array.from({ length: paragraphCount }, (_, i) => 
+    String.fromCharCode(65 + i)
+  ).map(l => `[${l}]`).join(", ");
+
+  const basePrompt = `Generate an IELTS Academic Reading test with:
+Topic: ${topic}
+Difficulty: ${difficulty}
+
+Create a reading passage with:
+- ${paragraphCount} paragraphs labeled ${paragraphLabels}
+- Each paragraph 80-150 words
+- Academic tone, well-structured
+- Contains specific testable information
+
+`;
+
+  switch (questionType) {
+    case "TRUE_FALSE_NOT_GIVEN":
+    case "YES_NO_NOT_GIVEN":
+      return basePrompt + `Create ${questionCount} ${questionType === "YES_NO_NOT_GIVEN" ? "Yes/No/Not Given" : "True/False/Not Given"} questions.
+
+Return ONLY valid JSON:
+{
+  "passage": {"title": "Title", "content": "Full passage with [A], [B], etc."},
+  "instruction": "Do the following statements agree with the information given?",
+  "questions": [
+    {"question_number": 1, "question_text": "Statement", "correct_answer": "${questionType === "YES_NO_NOT_GIVEN" ? "YES" : "TRUE"}", "explanation": "Why"}
+  ]
+}`;
+
+    case "MULTIPLE_CHOICE_SINGLE":
+      return basePrompt + `Create ${questionCount} multiple choice questions (single answer).
+
+Return ONLY valid JSON:
+{
+  "passage": {"title": "Title", "content": "Full passage"},
+  "instruction": "Choose the correct letter, A, B, C or D.",
+  "questions": [
+    {"question_number": 1, "question_text": "Question?", "options": ["A Option", "B Option", "C Option", "D Option"], "correct_answer": "A", "explanation": "Why"}
+  ]
+}`;
+
+    case "MATCHING_HEADINGS":
+      return basePrompt + `Create a matching headings task with ${questionCount} paragraphs needing headings.
+
+Return ONLY valid JSON:
+{
+  "passage": {"title": "Title", "content": "Full passage with [A], [B], etc."},
+  "instruction": "Choose the correct heading for each paragraph.",
+  "headings": ["i Heading 1", "ii Heading 2", "iii Heading 3", "iv Heading 4", "v Heading 5", "vi Heading 6", "vii Heading 7", "viii Extra heading"],
+  "questions": [
+    {"question_number": 1, "question_text": "Paragraph A", "correct_answer": "ii", "explanation": "Why"}
+  ]
+}`;
+
+    case "SENTENCE_COMPLETION":
+    case "SUMMARY_COMPLETION":
+      return basePrompt + `Create ${questionCount} ${questionType === "SENTENCE_COMPLETION" ? "sentence" : "summary"} completion questions.
+
+Return ONLY valid JSON:
+{
+  "passage": {"title": "Title", "content": "Full passage"},
+  "instruction": "Complete the sentences. Write NO MORE THAN THREE WORDS.",
+  "questions": [
+    {"question_number": 1, "question_text": "The main advantage is _____.", "correct_answer": "increased efficiency", "explanation": "Why"}
+  ]
+}`;
+
+    case "SHORT_ANSWER":
+      return basePrompt + `Create ${questionCount} short answer questions.
+
+Return ONLY valid JSON:
+{
+  "passage": {"title": "Title", "content": "Full passage"},
+  "instruction": "Answer the questions. Write NO MORE THAN THREE WORDS.",
+  "questions": [
+    {"question_number": 1, "question_text": "What was the main finding?", "correct_answer": "carbon emissions", "explanation": "Why"}
+  ]
+}`;
+
+    default:
+      return basePrompt + `Create ${questionCount} True/False/Not Given questions.
+
+Return ONLY valid JSON:
+{
+  "passage": {"title": "Title", "content": "Full passage"},
+  "instruction": "Do the following statements agree with the information given?",
+  "questions": [
+    {"question_number": 1, "question_text": "Statement", "correct_answer": "TRUE", "explanation": "Why"}
+  ]
+}`;
+  }
+}
+
+function getListeningPrompt(topic: string, difficulty: string, questionType: string, questionCount: number, monologue: boolean): string {
+  const speakerInstructions = monologue
+    ? `Create a monologue (single speaker) script that is:
+- 300-500 words (approximately 4 minutes when spoken)
+- Use "Speaker1:" prefix for all lines
+- Include speaker_names: {"Speaker1": "Role/Name"}`
+    : `Create a dialogue between two people that is:
+- 300-500 words (approximately 4 minutes when spoken)
+- Use "Speaker1:" and "Speaker2:" prefixes
+- Include speaker_names: {"Speaker1": "Name", "Speaker2": "Name"}`;
+
+  const basePrompt = `Generate an IELTS Listening test section:
+Topic: ${topic}
+Difficulty: ${difficulty}
+
+${speakerInstructions}
+- Natural conversation with realistic names/roles
+- Contains specific details (names, numbers, dates, locations)
+- Use <break time='2s'/> between speaker turns for pacing
+
+`;
+
+  switch (questionType) {
+    case "FILL_IN_BLANK":
+      return basePrompt + `Create ${questionCount} fill-in-the-blank questions.
+
+Return ONLY valid JSON:
+{
+  "dialogue": "Speaker1: Welcome...<break time='2s'/>\\nSpeaker2: Thank you...",
+  "speaker_names": {"Speaker1": "Guide", "Speaker2": "Visitor"},
+  "instruction": "Complete the notes. Write NO MORE THAN THREE WORDS.",
+  "questions": [
+    {"question_number": 1, "question_text": "The event is in _____.", "correct_answer": "the main hall", "explanation": "Why"}
+  ]
+}`;
+
+    case "MULTIPLE_CHOICE_SINGLE":
+      return basePrompt + `Create ${questionCount} multiple choice questions (single answer).
+
+Return ONLY valid JSON:
+{
+  "dialogue": "Speaker1: Let me explain...<break time='2s'/>",
+  "speaker_names": {"Speaker1": "Instructor"},
+  "instruction": "Choose the correct letter, A, B or C.",
+  "questions": [
+    {"question_number": 1, "question_text": "What is the main topic?", "options": ["A First", "B Second", "C Third"], "correct_answer": "A", "explanation": "Why"}
+  ]
+}`;
+
+    case "TABLE_COMPLETION":
+      return basePrompt + `Create a table completion task with ${questionCount} blanks.
+
+Return ONLY valid JSON:
+{
+  "dialogue": "Speaker1: Here's the schedule...<break time='2s'/>",
+  "speaker_names": {"Speaker1": "Coordinator"},
+  "instruction": "Complete the table below.",
+  "table_data": {
+    "headers": ["Event", "Time", "Location"],
+    "rows": [
+      [{"text": "Opening"}, {"text": "9:00 AM"}, {"isBlank": true, "questionNumber": 1}]
+    ]
+  },
+  "questions": [
+    {"question_number": 1, "question_text": "Location", "correct_answer": "Main Hall", "explanation": "Why"}
+  ]
+}`;
+
+    case "NOTE_COMPLETION":
+      return basePrompt + `Create a note completion task with ${questionCount} blanks.
+
+Return ONLY valid JSON:
+{
+  "dialogue": "Speaker1: The key points are...<break time='2s'/>",
+  "speaker_names": {"Speaker1": "Lecturer"},
+  "instruction": "Complete the notes below.",
+  "note_sections": [
+    {"title": "Main Topic", "items": [{"text_before": "Focus is on", "question_number": 1, "text_after": ""}]}
+  ],
+  "questions": [
+    {"question_number": 1, "question_text": "Note 1", "correct_answer": "research methods", "explanation": "Why"}
+  ]
+}`;
+
+    case "MATCHING_CORRECT_LETTER":
+      return basePrompt + `Create ${questionCount} matching questions.
+
+Return ONLY valid JSON:
+{
+  "dialogue": "Speaker1: Each department has...<break time='2s'/>",
+  "speaker_names": {"Speaker1": "Manager"},
+  "instruction": "Match each person to their department.",
+  "options": [{"letter": "A", "text": "Marketing"}, {"letter": "B", "text": "Finance"}, {"letter": "C", "text": "HR"}],
+  "questions": [
+    {"question_number": 1, "question_text": "John works in", "correct_answer": "A", "explanation": "Why"}
+  ]
+}`;
+
+    default:
+      return basePrompt + `Create ${questionCount} fill-in-the-blank questions.
+
+Return ONLY valid JSON:
+{
+  "dialogue": "Speaker1: dialogue...<break time='2s'/>\\nSpeaker2: response...",
+  "speaker_names": {"Speaker1": "Host", "Speaker2": "Guest"},
+  "instruction": "Complete the notes below.",
+  "questions": [
+    {"question_number": 1, "question_text": "The event is in _____.", "correct_answer": "main garden", "explanation": "Why"}
+  ]
+}`;
+  }
+}
+
+function getWritingPrompt(topic: string, difficulty: string, taskType: string): string {
+  if (taskType === "TASK_1") {
+    return `Generate an IELTS Academic Writing Task 1:
+Topic: ${topic}
+Difficulty: ${difficulty}
+
+Return ONLY valid JSON:
+{
+  "task_type": "TASK_1",
+  "instruction": "The chart below shows...",
+  "chart_description": "Description of the data visualization",
+  "chart_data": {
+    "type": "bar|line|pie",
+    "title": "Chart title",
+    "labels": ["Label1", "Label2"],
+    "datasets": [{"label": "Series1", "data": [10, 20, 30]}]
+  },
+  "model_answer": "A band 8-9 sample answer (150+ words)...",
+  "word_limit_min": 150,
+  "key_features": ["Feature 1", "Feature 2", "Feature 3"]
+}`;
+  } else {
+    return `Generate an IELTS Writing Task 2:
+Topic: ${topic}
+Difficulty: ${difficulty}
+
+Return ONLY valid JSON:
+{
+  "task_type": "TASK_2",
+  "instruction": "Some people believe that... To what extent do you agree or disagree?",
+  "essay_type": "opinion|discussion|problem_solution|two_part",
+  "model_answer": "A band 8-9 sample essay (250+ words)...",
+  "word_limit_min": 250,
+  "key_points": ["Point 1", "Point 2", "Point 3"],
+  "vocabulary_suggestions": ["word1", "word2", "word3"]
+}`;
+  }
+}
+
+function getSpeakingPrompt(topic: string, difficulty: string, questionType: string): string {
+  const includeParts = questionType === "FULL_TEST" 
+    ? "all three parts (Part 1, 2, and 3)"
+    : questionType === "PART_1" ? "Part 1 only"
+    : questionType === "PART_2" ? "Part 2 only"
+    : "Part 3 only";
+
+  return `Generate an IELTS Speaking test for ${includeParts}:
+Topic: ${topic}
+Difficulty: ${difficulty}
+
+Return ONLY valid JSON:
+{
+  "part1": {
+    "instruction": "I'd like to ask you some questions about yourself.",
+    "questions": ["Question 1?", "Question 2?", "Question 3?", "Question 4?"],
+    "sample_answers": ["Sample 1", "Sample 2", "Sample 3", "Sample 4"]
+  },
+  "part2": {
+    "instruction": "Now I'm going to give you a topic.",
+    "cue_card": "Describe a [topic]...\\nYou should say:\\n- point 1\\n- point 2\\n- point 3\\nAnd explain why...",
+    "preparation_time": 60,
+    "speaking_time": 120,
+    "sample_answer": "Model answer (200-250 words)..."
+  },
+  "part3": {
+    "instruction": "Let's discuss some more general questions.",
+    "questions": ["Discussion Q1?", "Discussion Q2?", "Discussion Q3?"],
+    "sample_answers": ["Sample 1", "Sample 2", "Sample 3"]
+  }
+}`;
+}
+
+// Generate and upload audio for listening tests
+async function generateAndUploadAudio(
   text: string,
   voiceName: string,
+  monologue: boolean,
   jobId: string,
   index: number
 ): Promise<string> {
@@ -606,14 +757,50 @@ async function generateAndUploadGeminiAudio(
   const cleanText = text
     .replace(/\[pause\s*\d*s?\]/gi, "...")
     .replace(/\n+/g, " ")
-    .slice(0, 5000) // Limit text length
+    .slice(0, 5000)
     .trim();
 
   if (!cleanText) {
     throw new Error("Empty text for TTS");
   }
 
-  // Call generate-gemini-tts function
+  // Try Edge TTS first (free)
+  try {
+    const edgeResponse = await fetch(`${supabaseUrl}/functions/v1/generate-edge-tts`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${supabaseServiceKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        items: [{ key: `test_${index}`, text: cleanText }],
+        accent: "GB",
+        monologue,
+      }),
+    });
+
+    if (edgeResponse.ok) {
+      const edgeData = await edgeResponse.json();
+      
+      if (edgeData.success && edgeData.clips?.[0]?.audioBase64) {
+        const { uploadToR2 } = await import("../_shared/r2Client.ts");
+        const audioBytes = Uint8Array.from(atob(edgeData.clips[0].audioBase64), c => c.charCodeAt(0));
+        const key = `generated-tests/${jobId}/${index}.mp3`;
+        
+        const uploadResult = await uploadToR2(key, audioBytes, "audio/mpeg");
+        if (uploadResult.success && uploadResult.url) {
+          console.log(`[Job ${jobId}] Edge TTS success for test ${index + 1}`);
+          return uploadResult.url;
+        }
+      }
+    }
+    
+    console.warn(`[Job ${jobId}] Edge TTS failed, trying Gemini TTS fallback`);
+  } catch (edgeErr) {
+    console.warn(`[Job ${jobId}] Edge TTS error:`, edgeErr);
+  }
+
+  // Fallback to Gemini TTS
   const response = await fetch(`${supabaseUrl}/functions/v1/generate-gemini-tts`, {
     method: "POST",
     headers: {
@@ -641,13 +828,9 @@ async function generateAndUploadGeminiAudio(
   const pcmBase64 = data.clips[0].audioBase64;
   const sampleRate = data.clips[0].sampleRate || 24000;
   
-  // Decode base64 to raw bytes
   const pcmBytes = Uint8Array.from(atob(pcmBase64), c => c.charCodeAt(0));
-  
-  // Create WAV file from PCM data
   const wavBytes = createWavFromPcm(pcmBytes, sampleRate);
   
-  // Upload to R2
   const { uploadToR2 } = await import("../_shared/r2Client.ts");
   const key = `generated-tests/${jobId}/${index}.wav`;
   
@@ -658,6 +841,146 @@ async function generateAndUploadGeminiAudio(
   }
 
   return uploadResult.url;
+}
+
+// Generate speaking audio for instructions and questions
+async function generateSpeakingAudio(
+  content: any,
+  voiceName: string,
+  jobId: string,
+  index: number
+): Promise<Record<string, string> | null> {
+  const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+  const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  
+  const audioUrls: Record<string, string> = {};
+  const ttsItems: Array<{ key: string; text: string }> = [];
+  
+  // Collect all texts that need TTS
+  if (content.part1) {
+    if (content.part1.instruction) {
+      ttsItems.push({ key: "part1_instruction", text: content.part1.instruction });
+    }
+    content.part1.questions?.forEach((q: string, idx: number) => {
+      ttsItems.push({ key: `part1_q${idx + 1}`, text: q });
+    });
+  }
+  
+  if (content.part2) {
+    const part2Instruction = "Now, I'm going to give you a topic. You'll have one minute to prepare, then speak for one to two minutes.";
+    ttsItems.push({ key: "part2_instruction", text: part2Instruction });
+    
+    if (content.part2.cue_card) {
+      const topic = content.part2.cue_card.split('\n')[0] || content.part2.cue_card;
+      ttsItems.push({ key: "part2_cuecard_topic", text: `Your topic is: ${topic}` });
+    }
+    
+    ttsItems.push({ 
+      key: "part2_start_speaking", 
+      text: "Your preparation time is over. Please start speaking now." 
+    });
+  }
+  
+  if (content.part3) {
+    const part3Instruction = "Now let's discuss some more general questions related to this topic.";
+    ttsItems.push({ key: "part3_instruction", text: part3Instruction });
+    
+    content.part3.questions?.forEach((q: string, idx: number) => {
+      ttsItems.push({ key: `part3_q${idx + 1}`, text: q });
+    });
+  }
+  
+  ttsItems.push({ key: "test_ending", text: "Thank you. That is the end of the speaking test." });
+  
+  if (ttsItems.length === 0) {
+    return null;
+  }
+
+  console.log(`[Job ${jobId}] Generating audio for ${ttsItems.length} speaking items`);
+
+  // Try Edge TTS first
+  try {
+    const edgeResponse = await fetch(`${supabaseUrl}/functions/v1/generate-edge-tts`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${supabaseServiceKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        items: ttsItems,
+        accent: "GB",
+      }),
+    });
+
+    if (edgeResponse.ok) {
+      const edgeData = await edgeResponse.json();
+      
+      if (edgeData.success && edgeData.clips?.length > 0) {
+        const { uploadToR2 } = await import("../_shared/r2Client.ts");
+        
+        for (const clip of edgeData.clips) {
+          const audioBytes = Uint8Array.from(atob(clip.audioBase64), c => c.charCodeAt(0));
+          const key = `speaking-tests/${jobId}/${index}/${clip.key}.mp3`;
+          
+          const uploadResult = await uploadToR2(key, audioBytes, "audio/mpeg");
+          if (uploadResult.success && uploadResult.url) {
+            audioUrls[clip.key] = uploadResult.url;
+          }
+        }
+        
+        console.log(`[Job ${jobId}] Edge TTS generated ${Object.keys(audioUrls).length} audio files`);
+        return Object.keys(audioUrls).length > 0 ? audioUrls : null;
+      }
+    }
+    
+    console.warn(`[Job ${jobId}] Edge TTS failed, trying Gemini TTS fallback`);
+  } catch (edgeErr) {
+    console.warn(`[Job ${jobId}] Edge TTS error:`, edgeErr);
+  }
+
+  // Fallback to Gemini TTS
+  try {
+    const geminiResponse = await fetch(`${supabaseUrl}/functions/v1/generate-gemini-tts`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${supabaseServiceKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        items: ttsItems,
+        voiceName,
+      }),
+    });
+
+    if (!geminiResponse.ok) {
+      throw new Error(`Gemini TTS failed: ${geminiResponse.status}`);
+    }
+
+    const geminiData = await geminiResponse.json();
+
+    if (!geminiData.success || !geminiData.clips?.length) {
+      throw new Error("No audio from Gemini TTS");
+    }
+
+    const { uploadToR2 } = await import("../_shared/r2Client.ts");
+
+    for (const clip of geminiData.clips) {
+      const pcmBytes = Uint8Array.from(atob(clip.audioBase64), c => c.charCodeAt(0));
+      const wavBytes = createWavFromPcm(pcmBytes, clip.sampleRate || 24000);
+      const key = `speaking-tests/${jobId}/${index}/${clip.key}.wav`;
+
+      const uploadResult = await uploadToR2(key, wavBytes, "audio/wav");
+      if (uploadResult.success && uploadResult.url) {
+        audioUrls[clip.key] = uploadResult.url;
+      }
+    }
+
+    console.log(`[Job ${jobId}] Gemini TTS fallback generated ${Object.keys(audioUrls).length} audio files`);
+    return Object.keys(audioUrls).length > 0 ? audioUrls : null;
+  } catch (geminiErr) {
+    console.error(`[Job ${jobId}] Gemini TTS fallback also failed:`, geminiErr);
+    throw geminiErr;
+  }
 }
 
 function createWavFromPcm(pcmData: Uint8Array, sampleRate: number): Uint8Array {
@@ -679,8 +1002,8 @@ function createWavFromPcm(pcmData: Uint8Array, sampleRate: number): Uint8Array {
 
   // fmt chunk
   writeString(view, 12, "fmt ");
-  view.setUint32(16, 16, true); // chunk size
-  view.setUint16(20, 1, true); // audio format (PCM)
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
   view.setUint16(22, numChannels, true);
   view.setUint32(24, sampleRate, true);
   view.setUint32(28, byteRate, true);
@@ -703,3 +1026,8 @@ function writeString(view: DataView, offset: number, str: string): void {
     view.setUint8(offset + i, str.charCodeAt(i));
   }
 }
+
+// Declare EdgeRuntime for TypeScript
+declare const EdgeRuntime: {
+  waitUntil?: (promise: Promise<any>) => void;
+} | undefined;
