@@ -874,7 +874,7 @@ Return ONLY valid JSON:
 }`;
 }
 
-// Direct Gemini TTS call using api_keys table (for bulk generation without user context)
+// Direct Gemini TTS call using api_keys table with FULL retry across ALL available keys
 async function generateGeminiTtsDirect(
   supabaseServiceClient: any,
   text: string,
@@ -890,13 +890,15 @@ async function generateGeminiTtsDirect(
 
   const prompt = `You are an IELTS Speaking examiner with a neutral British accent.\n\nRead aloud EXACTLY the following text. Do not add, remove, or paraphrase anything. Use natural pacing and clear pronunciation.\n\n"""\n${text}\n"""`;
 
-  // Try each API key in rotation
+  // Try ALL available API keys - if one fails, move to the next
   let lastError: Error | null = null;
-  const keysToTry = Math.min(apiKeyCache.length, 3);
+  const keysToTry = apiKeyCache.length; // Try ALL keys, not just 3
+  const triedKeyIds = new Set<string>();
   
   for (let i = 0; i < keysToTry; i++) {
     const keyRecord = getNextApiKey();
-    if (!keyRecord) continue;
+    if (!keyRecord || triedKeyIds.has(keyRecord.id)) continue;
+    triedKeyIds.add(keyRecord.id);
     
     try {
       const resp = await fetchWithTimeout(
@@ -923,9 +925,10 @@ async function generateGeminiTtsDirect(
         const errorText = await resp.text();
         console.error(`Gemini TTS error with key ${keyRecord.id}:`, resp.status, errorText.slice(0, 200));
         
-        // Track error for this key
+        // Track error for this key - deactivate on auth errors
         await incrementKeyErrorCount(supabaseServiceClient, keyRecord.id, resp.status === 401 || resp.status === 403);
         lastError = new Error(`Gemini TTS failed (${resp.status})`);
+        // Continue to next key
         continue;
       }
 
@@ -944,6 +947,7 @@ async function generateGeminiTtsDirect(
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
       console.error(`Gemini TTS attempt with key ${keyRecord.id} failed:`, lastError.message);
+      // Continue to next key
     }
   }
 
