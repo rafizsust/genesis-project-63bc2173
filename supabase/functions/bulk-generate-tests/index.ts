@@ -993,7 +993,33 @@ async function generateAndUploadAudio(
   return uploadResult.url;
 }
 
-// Generate speaking audio for instructions and questions
+// Parallel processing helper with concurrency limit
+async function processWithConcurrency<T, R>(
+  items: T[],
+  fn: (item: T) => Promise<R>,
+  concurrency: number
+): Promise<R[]> {
+  const results: R[] = [];
+  let index = 0;
+
+  async function worker() {
+    while (index < items.length) {
+      const currentIndex = index++;
+      try {
+        results[currentIndex] = await fn(items[currentIndex]);
+      } catch (err) {
+        // Store null for failed items - caller handles
+        results[currentIndex] = null as unknown as R;
+      }
+    }
+  }
+
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, () => worker());
+  await Promise.all(workers);
+  return results;
+}
+
+// Generate speaking audio for instructions and questions (PARALLELIZED)
 async function generateSpeakingAudio(
   supabaseServiceClient: any,
   content: any,
@@ -1001,7 +1027,6 @@ async function generateSpeakingAudio(
   jobId: string,
   index: number
 ): Promise<Record<string, string> | null> {
-  const audioUrls: Record<string, string> = {};
   const ttsItems: Array<{ key: string; text: string }> = [];
   
   // Collect all texts that need TTS
@@ -1044,35 +1069,46 @@ async function generateSpeakingAudio(
     return null;
   }
 
-  console.log(`[Job ${jobId}] Generating audio for ${ttsItems.length} speaking items using Gemini TTS (api_keys table)`);
+  console.log(`[Job ${jobId}] Generating audio for ${ttsItems.length} speaking items using PARALLEL Gemini TTS`);
 
   const { uploadToR2 } = await import("../_shared/r2Client.ts");
 
-  // Generate each item using direct Gemini TTS with api_keys rotation
-  for (const item of ttsItems) {
-    try {
-      const { audioBase64, sampleRate } = await generateGeminiTtsDirect(
-        supabaseServiceClient,
-        item.text,
-        voiceName
-      );
-      
-      const pcmBytes = Uint8Array.from(atob(audioBase64), c => c.charCodeAt(0));
-      const wavBytes = createWavFromPcm(pcmBytes, sampleRate);
-      const key = `speaking-tests/${jobId}/${index}/${item.key}.wav`;
+  // Process TTS items in parallel with concurrency limit (use all available API keys efficiently)
+  const concurrency = Math.min(apiKeyCache.length || 3, 5);
+  
+  const results = await processWithConcurrency(
+    ttsItems,
+    async (item) => {
+      try {
+        const { audioBase64, sampleRate } = await generateGeminiTtsDirect(
+          supabaseServiceClient,
+          item.text,
+          voiceName
+        );
+        
+        const pcmBytes = Uint8Array.from(atob(audioBase64), c => c.charCodeAt(0));
+        const wavBytes = createWavFromPcm(pcmBytes, sampleRate);
+        const key = `speaking-tests/${jobId}/${index}/${item.key}.wav`;
 
-      const uploadResult = await uploadToR2(key, wavBytes, "audio/wav");
-      if (uploadResult.success && uploadResult.url) {
-        audioUrls[item.key] = uploadResult.url;
+        const uploadResult = await uploadToR2(key, wavBytes, "audio/wav");
+        if (uploadResult.success && uploadResult.url) {
+          return { key: item.key, url: uploadResult.url };
+        }
+        return null;
+      } catch (err) {
+        console.warn(`[Job ${jobId}] Failed TTS for ${item.key}:`, err);
+        return null;
       }
-      
-      // Small delay between requests to avoid rate limiting
-      await new Promise(r => setTimeout(r, 300));
-    } catch (err) {
-      console.warn(`[Job ${jobId}] Failed to generate audio for ${item.key}:`, err);
-      // Continue with other items - speaking can use browser TTS fallback
+    },
+    concurrency
+  );
+
+  const audioUrls: Record<string, string> = {};
+  results.forEach((r) => {
+    if (r && r.key && r.url) {
+      audioUrls[r.key] = r.url;
     }
-  }
+  });
 
   console.log(`[Job ${jobId}] Generated ${Object.keys(audioUrls).length}/${ttsItems.length} speaking audio files`);
   return Object.keys(audioUrls).length > 0 ? audioUrls : null;
