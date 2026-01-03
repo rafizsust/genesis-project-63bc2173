@@ -67,13 +67,21 @@ function parseSupabaseStorageObjectUrl(url: string): ParsedStorageRef | null {
 }
 
 async function getSignedUrl(url: string): Promise<string> {
-  const storageRef = parseSupabaseStorageObjectUrl(url);
-  if (!storageRef) {
-    throw new Error('External audio URL detected. Please upload to Supabase Storage.');
+  // If it's an external URL (R2, CDN, or any non-Supabase URL), use it directly
+  // This supports Cloudflare R2 and other external audio sources
+  if (!url.includes('/storage/v1/')) {
+    return url;
   }
 
-  // If it's already a public URL, use it directly
+  // If it's already a public Supabase URL, use it directly
   if (url.includes('/storage/v1/object/public/')) {
+    return url;
+  }
+
+  // For Supabase private storage URLs, generate a signed URL
+  const storageRef = parseSupabaseStorageObjectUrl(url);
+  if (!storageRef) {
+    // Fallback: if we can't parse but it looks like Supabase, return as-is
     return url;
   }
 

@@ -506,6 +506,8 @@ export default function AIPractice() {
         topic: data.topic || topicPreference || 'Random Topic',
         timeMinutes: finalTimeMinutes,
         passage: data.passage,
+        // Audio fields - ensure both camelCase and snake_case are captured for R2 URLs
+        audioUrl: data.audioUrl || data.audio_url || null,
         audioBase64: data.audioBase64,
         audioFormat: data.audioFormat,
         sampleRate: data.sampleRate,
