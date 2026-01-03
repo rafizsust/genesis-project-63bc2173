@@ -1974,11 +1974,11 @@ serve(async (req) => {
               ? payload.questionGroups.map((g: any) => buildGroup(g, topLevelType))
               : [buildGroup({ questions: payload.questions, options: payload.options }, topLevelType)];
 
-            // Generate unique testId for each preset run to avoid PK collisions in ai_practice_tests
-            const uniqueListeningTestId = `preset-${preset.id}-${crypto.randomUUID()}`;
+            // IMPORTANT: ai_practice_tests.id is a UUID, so preset runs must also use a UUID testId (not "preset-...")
+            const presetRunTestId = crypto.randomUUID();
             
             const responsePayload = {
-              testId: uniqueListeningTestId,
+              testId: presetRunTestId,
               topic: preset.topic,
               transcript: preset.transcript || payload.dialogue || payload.transcript,
               speakerNames: payload.speaker_names || payload.speakerNames,
@@ -2060,11 +2060,11 @@ serve(async (req) => {
             speakingParts.push(...payload.speakingParts);
           }
           
-          // Generate unique testId for each preset run to avoid PK collisions in ai_practice_tests
-          const uniqueSpeakingTestId = `preset-${preset.id}-${crypto.randomUUID()}`;
+          // IMPORTANT: ai_practice_tests.id is a UUID, so preset runs must also use a UUID testId (not "preset-...")
+          const presetRunTestId = crypto.randomUUID();
           
           const responsePayload = {
-            testId: uniqueSpeakingTestId,
+            testId: presetRunTestId,
             topic: preset.topic,
             speakingParts,
             audioUrls: payload.audioUrls, // Pre-generated TTS audio URLs
@@ -2242,11 +2242,11 @@ serve(async (req) => {
             ? payload.questionGroups.map((g: any) => buildGroup(g, topLevelType))
             : [buildGroup({ questions: payload.questions, options: payload.options }, topLevelType)];
 
-          // Generate unique testId for each preset run to avoid PK collisions in ai_practice_tests
-          const uniqueTestId = `preset-${preset.id}-${crypto.randomUUID()}`;
+          // IMPORTANT: ai_practice_tests.id is a UUID, so preset runs must also use a UUID testId (not "preset-...")
+          const presetRunTestId = crypto.randomUUID();
           
           const responsePayload = {
-            testId: uniqueTestId,
+            testId: presetRunTestId,
             topic: preset.topic,
             passage: normalizePassage(payload.passage),
             questionGroups: groups,
@@ -2260,11 +2260,11 @@ serve(async (req) => {
           });
         } else if (module === 'writing') {
           // Writing preset response
-          // Generate unique testId for each preset run to avoid PK collisions in ai_practice_tests
-          const uniqueWritingTestId = `preset-${preset.id}-${crypto.randomUUID()}`;
+          // IMPORTANT: ai_practice_tests.id is a UUID, so preset runs must also use a UUID testId (not "preset-...")
+          const presetRunTestId = crypto.randomUUID();
           
           const responsePayload = {
-            testId: uniqueWritingTestId,
+            testId: presetRunTestId,
             topic: preset.topic,
             writingTask: payload.writingTask || payload,
             isPreset: true,

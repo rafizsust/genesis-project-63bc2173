@@ -109,10 +109,10 @@ export default function AIPracticeResults() {
       // Load result directly by (user_id, test_id) for reliability
       // Retry briefly as the insert is async
       let matchingResult: PracticeResult | null = null;
-      for (let attempt = 0; attempt < 6; attempt++) {
+      for (let attempt = 0; attempt < 15; attempt++) {
         matchingResult = await loadPracticeResultByTestIdAsync(user.id, testId);
         if (matchingResult) break;
-        await new Promise(r => setTimeout(r, 800));
+        await new Promise(r => setTimeout(r, 1000));
       }
 
       if (cancelled) return;

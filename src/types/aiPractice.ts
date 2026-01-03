@@ -370,7 +370,7 @@ export async function saveGeneratedTestAsync(test: GeneratedTest, userId: string
 
   if (insertError) {
     console.error('Failed to save AI practice test to Supabase:', insertError);
-    return;
+    throw insertError;
   }
 
   // If this is a listening test, upload a WAV so history/retake can play audio.

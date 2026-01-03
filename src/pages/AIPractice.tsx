@@ -484,6 +484,8 @@ export default function AIPractice() {
         questionGroups: data.questionGroups,
         writingTask: data.writingTask,
         speakingParts: data.speakingParts,
+        isPreset: Boolean(data?.isPreset),
+        presetId: data?.presetId,
         totalQuestions: activeModule === 'writing' ? 1 : 
           activeModule === 'speaking' ? (data.speakingParts?.reduce((acc: number, p: any) => acc + (p.questions?.length || 0), 0) || 0) : 
           // For MCMA, totalQuestions is always 3 (standardized)
