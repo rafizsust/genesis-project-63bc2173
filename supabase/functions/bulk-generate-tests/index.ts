@@ -16,6 +16,50 @@ const TTS_VOICES = {
 
 const ALL_ACCENTS = Object.keys(TTS_VOICES) as Array<keyof typeof TTS_VOICES>;
 
+// ============================================================================
+// VOICE-FIRST GENDER SYNCHRONIZATION SYSTEM
+// ============================================================================
+const VOICE_GENDER_MAP: Record<string, 'male' | 'female'> = {
+  'Kore': 'male',
+  'Charon': 'male',
+  'Fenrir': 'male',
+  'Puck': 'male',
+  'Aoede': 'female',
+};
+
+function getVoiceGender(voiceName: string): 'male' | 'female' {
+  return VOICE_GENDER_MAP[voiceName] || 'male';
+}
+
+function getGenderAppropriateNames(gender: 'male' | 'female'): string[] {
+  if (gender === 'male') {
+    return ['Tom', 'David', 'John', 'Michael', 'James', 'Robert', 'William', 'Richard', 'Daniel', 'Mark'];
+  }
+  return ['Sarah', 'Emma', 'Lisa', 'Anna', 'Maria', 'Sophie', 'Rachel', 'Laura', 'Helen', 'Kate'];
+}
+
+function buildGenderConstraint(primaryVoice: string, hasSecondSpeaker: boolean): string {
+  const primaryGender = getVoiceGender(primaryVoice);
+  const oppositeGender = primaryGender === 'male' ? 'female' : 'male';
+  const primaryNames = getGenderAppropriateNames(primaryGender).slice(0, 5).join(', ');
+  const secondaryNames = getGenderAppropriateNames(oppositeGender).slice(0, 5).join(', ');
+  
+  let constraint = `
+CRITICAL - VOICE-GENDER SYNCHRONIZATION:
+- The MAIN SPEAKER (Speaker1) for this audio is ${primaryGender.toUpperCase()}.
+- You MUST assign Speaker1 a ${primaryGender} name (e.g., ${primaryNames}).
+- You MUST NOT write self-identifying phrases that contradict this gender.
+- DO NOT use phrases like "${primaryGender === 'male' ? "I am a mother" : "I am a father"}" or names of the wrong gender.`;
+
+  if (hasSecondSpeaker) {
+    constraint += `
+- The SECOND SPEAKER (Speaker2) should be ${oppositeGender.toUpperCase()} for voice distinctiveness.
+- Assign Speaker2 a ${oppositeGender} name (e.g., ${secondaryNames}).`;
+  }
+  
+  return constraint;
+}
+
 function getRandomVoice(preferredAccent?: string): { voiceName: string; accent: string } {
   let accent: keyof typeof TTS_VOICES;
   
@@ -346,8 +390,9 @@ async function processGenerationJob(
       const currentQuestionType = questionTypes[i % questionTypes.length];
       
       // Generate content using the same prompts as generate-ai-practice
+      // Pass voiceName for gender synchronization (listening/speaking modules)
       const content = await withRetry(
-        () => generateContent(module, topic, difficulty, currentQuestionType, monologue),
+        () => generateContent(module, topic, difficulty, currentQuestionType, monologue, voiceName),
         3,
         2000
       );
@@ -574,7 +619,8 @@ async function generateContent(
   topic: string,
   difficulty: string,
   questionType: string,
-  monologue: boolean
+  monologue: boolean,
+  voiceName?: string
 ): Promise<any> {
   const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
   
@@ -582,7 +628,7 @@ async function generateContent(
     throw new Error("LOVABLE_API_KEY not configured");
   }
 
-  const prompt = getPromptForModule(module, topic, difficulty, questionType, monologue);
+  const prompt = getPromptForModule(module, topic, difficulty, questionType, monologue, voiceName);
 
   const response = await fetchWithTimeout(
     "https://ai.gateway.lovable.dev/v1/chat/completions",
@@ -641,7 +687,8 @@ function getPromptForModule(
   topic: string,
   difficulty: string,
   questionType: string,
-  monologue: boolean
+  monologue: boolean,
+  voiceName?: string
 ): string {
   const difficultyDesc = difficulty === "easy" ? "Band 5.5-6.5" : difficulty === "medium" ? "Band 7-8" : "Band 8.5-9";
   // MCMA uses 3 questions (user selects 3 answers), all other types use 7
@@ -652,7 +699,7 @@ function getPromptForModule(
     case "reading":
       return getReadingPrompt(topic, difficultyDesc, questionType, questionCount, paragraphCount);
     case "listening":
-      return getListeningPrompt(topic, difficultyDesc, questionType, questionCount, monologue);
+      return getListeningPrompt(topic, difficultyDesc, questionType, questionCount, monologue, voiceName);
     case "writing":
       return getWritingPrompt(topic, difficultyDesc, questionType);
     case "speaking":
@@ -870,8 +917,12 @@ Return ONLY valid JSON:
   }
 }
 
-function getListeningPrompt(topic: string, difficulty: string, questionType: string, questionCount: number, monologue: boolean): string {
+function getListeningPrompt(topic: string, difficulty: string, questionType: string, questionCount: number, monologue: boolean, voiceName?: string): string {
   // TEMPORARY: 1 minute audio for testing (revert to 300-500 words / 4 minutes for production)
+  
+  // Build gender constraint if voice is provided
+  const genderConstraint = voiceName ? buildGenderConstraint(voiceName, !monologue) : '';
+  
   const speakerInstructions = monologue
     ? `Create a monologue (single speaker) script that is:
 - 100-150 words (approximately 1 minute when spoken)
@@ -882,9 +933,20 @@ function getListeningPrompt(topic: string, difficulty: string, questionType: str
 - Use "Speaker1:" and "Speaker2:" prefixes
 - Include speaker_names: {"Speaker1": "Name", "Speaker2": "Name"}`;
 
+  // NATURAL GAP POSITIONING INSTRUCTION
+  const gapPositionInstruction = `
+CRITICAL - NATURAL GAP/BLANK POSITIONING:
+For fill-in-the-blank questions, you MUST randomize the position of the missing word (represented by _____):
+- 30% of questions: Blank should be near the START of the sentence (e.g., "_____ is the main attraction.")
+- 40% of questions: Blank should be in the MIDDLE of the sentence (e.g., "The event starts at _____ on Saturday.")
+- 30% of questions: Blank should be at the END of the sentence (e.g., "Visitors should bring _____.")
+- Ensure the sentence context makes the missing word deducible from the audio.
+- NEVER put all blanks at the same position - vary them naturally across questions.`;
+
   const basePrompt = `Generate an IELTS Listening test section:
 Topic: ${topic}
 Difficulty: ${difficulty}
+${genderConstraint}
 
 ${speakerInstructions}
 - Natural conversation with realistic names/roles
@@ -896,6 +958,7 @@ ${speakerInstructions}
   switch (questionType) {
     case "FILL_IN_BLANK":
       return basePrompt + `Create ${questionCount} fill-in-the-blank questions.
+${gapPositionInstruction}
 
 Return ONLY valid JSON:
 {
@@ -903,7 +966,9 @@ Return ONLY valid JSON:
   "speaker_names": {"Speaker1": "Guide", "Speaker2": "Visitor"},
   "instruction": "Complete the notes. Write NO MORE THAN THREE WORDS.",
   "questions": [
-    {"question_number": 1, "question_text": "The event is in _____.", "correct_answer": "the main hall", "explanation": "Why"}
+    {"question_number": 1, "question_text": "_____ is located near the entrance.", "correct_answer": "The gift shop", "explanation": "Speaker mentions location"},
+    {"question_number": 2, "question_text": "The tour starts at _____ each morning.", "correct_answer": "9:30 AM", "explanation": "Speaker mentions time"},
+    {"question_number": 3, "question_text": "Visitors should bring _____.", "correct_answer": "comfortable shoes", "explanation": "Speaker recommends footwear"}
   ]
 }`;
 

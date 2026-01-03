@@ -161,6 +161,65 @@ const LISTENING_SCENARIOS = [
   { type: 'phone_call', description: 'a phone conversation about booking or inquiry' },
 ];
 
+// ============================================================================
+// VOICE-FIRST GENDER SYNCHRONIZATION SYSTEM
+// ============================================================================
+// TTS Voice to Gender mapping for script synchronization
+const VOICE_GENDER_MAP: Record<string, 'male' | 'female'> = {
+  // Gemini TTS voices
+  'Kore': 'male',
+  'Charon': 'male',
+  'Fenrir': 'male',
+  'Puck': 'male',
+  'Aoede': 'female',
+  // Edge TTS voices (common British/US)
+  'en-GB-RyanNeural': 'male',
+  'en-GB-SoniaNeural': 'female',
+  'en-US-GuyNeural': 'male',
+  'en-US-AriaNeural': 'female',
+  'en-US-JennyNeural': 'female',
+  'en-AU-WilliamNeural': 'male',
+  'en-AU-NatashaNeural': 'female',
+  'en-IN-PrabhatNeural': 'male',
+  'en-IN-NeerjaNeural': 'female',
+};
+
+// Get gender from voice name (defaults to male for unknown voices)
+function getVoiceGender(voiceName: string): 'male' | 'female' {
+  return VOICE_GENDER_MAP[voiceName] || 'male';
+}
+
+// Get appropriate names based on gender
+function getGenderAppropriateNames(gender: 'male' | 'female'): string[] {
+  if (gender === 'male') {
+    return ['Tom', 'David', 'John', 'Michael', 'James', 'Robert', 'William', 'Richard', 'Daniel', 'Mark'];
+  }
+  return ['Sarah', 'Emma', 'Lisa', 'Anna', 'Maria', 'Sophie', 'Rachel', 'Laura', 'Helen', 'Kate'];
+}
+
+// Build gender constraint for AI prompt
+function buildGenderConstraint(primaryVoice: string, hasSecondSpeaker: boolean): string {
+  const primaryGender = getVoiceGender(primaryVoice);
+  const oppositeGender = primaryGender === 'male' ? 'female' : 'male';
+  const primaryNames = getGenderAppropriateNames(primaryGender).slice(0, 5).join(', ');
+  const secondaryNames = getGenderAppropriateNames(oppositeGender).slice(0, 5).join(', ');
+  
+  let constraint = `
+CRITICAL - VOICE-GENDER SYNCHRONIZATION:
+- The MAIN SPEAKER (Speaker1) for this audio is ${primaryGender.toUpperCase()}.
+- You MUST assign Speaker1 a ${primaryGender} name (e.g., ${primaryNames}).
+- You MUST NOT write self-identifying phrases that contradict this gender.
+- DO NOT use phrases like "${primaryGender === 'male' ? "I am a mother" : "I am a father"}" or names of the wrong gender.`;
+
+  if (hasSecondSpeaker) {
+    constraint += `
+- The SECOND SPEAKER (Speaker2) should be ${oppositeGender.toUpperCase()} for voice distinctiveness.
+- Assign Speaker2 a ${oppositeGender} name (e.g., ${secondaryNames}).`;
+  }
+  
+  return constraint;
+}
+
 // Gemini models for IELTS text generation - sorted by performance & suitability
 // 1. gemini-2.5-flash: Stable, best speed/quality balance for structured text generation (June 2025)
 // 2. gemini-2.5-pro: Highest quality reasoning, best for complex question generation (fallback)
@@ -1511,6 +1570,16 @@ ${characterInstructions}
     const spellingMode = listeningConfig?.spellingMode;
     const isMonologue = listeningConfig?.monologueMode === true;
     
+    // NATURAL GAP POSITIONING INSTRUCTION - randomizes blank positions
+    const gapPositionInstruction = `
+CRITICAL - NATURAL GAP/BLANK POSITIONING:
+For fill-in-the-blank questions, you MUST randomize the position of the missing word (represented by _____):
+- 30% of questions: Blank should be near the START of the sentence (e.g., "_____ is the main attraction.")
+- 40% of questions: Blank should be in the MIDDLE of the sentence (e.g., "The event starts at _____ on Saturday.")
+- 30% of questions: Blank should be at the END of the sentence (e.g., "Visitors should bring _____.")
+- Ensure the sentence context makes the missing word deducible from the audio.
+- NEVER put all blanks at the same position - vary them naturally across questions.`;
+    
     // Monologue mode (IELTS Part 4 style)
     if (isMonologue) {
       return basePrompt + `2. Create ${effectiveQuestionCount} fill-in-the-blank questions in IELTS Part 4 monologue style.
@@ -1519,6 +1588,7 @@ CRITICAL RULES FOR MONOLOGUE MODE:
 - This is a SINGLE SPEAKER monologue (like a lecture, tour guide, or presentation)
 - Use "Speaker1:" prefix for ALL lines (required for TTS)
 - Blanks should contain common nouns, dates, numbers, or descriptive phrases
+${gapPositionInstruction}
 
 Return ONLY valid JSON:
 {
@@ -1526,13 +1596,16 @@ Return ONLY valid JSON:
   "speaker_names": {"Speaker1": "Professor Williams"},
   "instruction": "Complete the notes below. Write NO MORE THAN THREE WORDS AND/OR A NUMBER for each answer.",
   "questions": [
-    {"question_number": 1, "question_text": "_____ was the primary building material used.", "correct_answer": "Limestone", "explanation": "Speaker mentions limestone"}
+    {"question_number": 1, "question_text": "_____ was the primary building material used.", "correct_answer": "Limestone", "explanation": "Speaker mentions limestone"},
+    {"question_number": 2, "question_text": "The museum opens at _____ on weekdays.", "correct_answer": "9 AM", "explanation": "Speaker states opening time"},
+    {"question_number": 3, "question_text": "Visitors should register at _____.", "correct_answer": "the front desk", "explanation": "Speaker mentions registration location"}
   ]
 }`;
     }
     
     // Standard Fill-in-Blank
     return basePrompt + `2. Create ${effectiveQuestionCount} fill-in-the-blank questions.
+${gapPositionInstruction}
 
 Return ONLY valid JSON:
 {
@@ -1540,7 +1613,9 @@ Return ONLY valid JSON:
   "speaker_names": {"Speaker1": "Tour Guide", "Speaker2": "Visitor"},
   "instruction": "Complete the notes below. Write NO MORE THAN THREE WORDS AND/OR A NUMBER for each answer.",
   "questions": [
-    {"question_number": 1, "question_text": "The event takes place in _____.", "correct_answer": "the main garden", "explanation": "Speaker mentions the main garden location"}
+    {"question_number": 1, "question_text": "_____ is located on the second floor.", "correct_answer": "The gift shop", "explanation": "Speaker mentions gift shop location"},
+    {"question_number": 2, "question_text": "The tour lasts approximately _____.", "correct_answer": "45 minutes", "explanation": "Speaker mentions tour duration"},
+    {"question_number": 3, "question_text": "Photography is not allowed in _____.", "correct_answer": "the main gallery", "explanation": "Speaker mentions photography restriction"}
   ]
 }`;
   }
