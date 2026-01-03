@@ -335,12 +335,49 @@ export function ReadingQuestions({
         const allQuestionsInType = groupEntries.flatMap(([_, qs]) => qs);
         const overallQuestionRange = getQuestionRange(allQuestionsInType);
         
-        // Get instruction from first group for section header
+        // Get instruction from first group for section header (MCQ Multiple)
         const firstGroupQuestions = groupEntries[0]?.[1] || [];
-        const firstGroupMeta = getQuestionGroupOptions 
-          ? getQuestionGroupOptions(firstGroupQuestions[0]?.question_group_id || null) 
+        const firstGroupQuestion = firstGroupQuestions[0];
+
+        const firstGroupMeta = getQuestionGroupOptions
+          ? getQuestionGroupOptions(firstGroupQuestion?.question_group_id || null)
           : null;
-        const sectionMaxAnswers = firstGroupMeta?.options?.max_answers || 2;
+
+        const inferMaxAnswersFromText = (text: string | undefined): number | null => {
+          if (!text) return null;
+          const m =
+            text.match(/\b(one|two|three|four|five|six|seven|eight|nine|ten|\d+)\b\s+(?:statements|answers|options|letters?)\b/i) ||
+            text.match(/\bwhich\s+(one|two|three|four|five|six|seven|eight|nine|ten|\d+)\b/i);
+          if (!m) return null;
+          const raw = m[1].toLowerCase();
+          const map: Record<string, number> = {
+            one: 1,
+            two: 2,
+            three: 3,
+            four: 4,
+            five: 5,
+            six: 6,
+            seven: 7,
+            eight: 8,
+            nine: 9,
+            ten: 10,
+          };
+          if (raw in map) return map[raw];
+          const asNum = Number(raw);
+          return Number.isFinite(asNum) && asNum > 0 ? asNum : null;
+        };
+
+        const sectionMaxAnswers = (() => {
+          const fromOptions = Number((firstGroupMeta as any)?.options?.max_answers);
+          if (Number.isFinite(fromOptions) && fromOptions > 0) return fromOptions;
+
+          const groupId = firstGroupQuestion?.question_group_id || null;
+          const fromGetter = getMaxAnswers ? getMaxAnswers(groupId) : null;
+          if (typeof fromGetter === 'number' && fromGetter > 0) return fromGetter;
+
+          const inferred = inferMaxAnswersFromText(firstGroupQuestion?.question_text);
+          return inferred ?? 2;
+        })();
         
         const numberToWordSection = (n: number) => {
           switch (n) {
@@ -513,51 +550,29 @@ export function ReadingQuestions({
                     const groupData = getQuestionGroupOptions
                       ? getQuestionGroupOptions(firstQuestionInGroup.question_group_id || null)
                       : null;
-                    
-                    // Get options from group
-                    const groupOptionsData = groupData?.options || {};
-                    const mcqOptions = Array.isArray(groupOptionsData?.options) 
-                      ? groupOptionsData.options 
-                      : Array.isArray(groupOptionsData) 
-                        ? groupOptionsData 
-                        : [];
-                    const optionFormat = groupOptionsData?.option_format || groupData?.option_format || 'A';
 
-                    // Prefer explicit max_answers from group options; otherwise infer from question text ("Which TWO/THREE...").
-                    const inferMaxAnswersFromText = (text: string | undefined): number | null => {
-                      if (!text) return null;
-                      const m = text.match(/\b(one|two|three|four|five|six|seven|eight|nine|ten|\d+)\b\s+(?:statements|answers|options|letters?)\b/i)
-                        || text.match(/\bwhich\s+(one|two|three|four|five|six|seven|eight|nine|ten|\d+)\b/i);
-                      if (!m) return null;
-                      const raw = m[1].toLowerCase();
-                      const map: Record<string, number> = {
-                        one: 1,
-                        two: 2,
-                        three: 3,
-                        four: 4,
-                        five: 5,
-                        six: 6,
-                        seven: 7,
-                        eight: 8,
-                        nine: 9,
-                        ten: 10,
-                      };
-                      if (raw in map) return map[raw];
-                      const asNum = Number(raw);
-                      return Number.isFinite(asNum) && asNum > 0 ? asNum : null;
-                    };
-
-                    const inferred = inferMaxAnswersFromText(firstQuestionInGroup?.question_text);
-                    const maxAnswersForGroup =
-                      groupOptionsData?.max_answers || groupData?.max_answers || inferred || 2;
-                    
-                    // Calculate question range based on max_answers
-                    const startQ = firstQuestionInGroup.question_number;
-                    const endQ = startQ + maxAnswersForGroup - 1;
-                    const mcqQuestionRange = maxAnswersForGroup > 1 ? `${startQ}-${endQ}` : `${startQ}`;
-                    
                     // Get the first (and only) question for this group
                     const groupQuestion = typeQuestions[0];
+
+                    const extractOptions = (raw: any): string[] => {
+                      if (Array.isArray(raw)) return raw;
+                      if (raw && typeof raw === 'object' && Array.isArray(raw.options)) return raw.options;
+                      return [];
+                    };
+
+                    // Get options from group (preferred), fallback to question.options (common in some presets)
+                    const groupOptionsData: any = groupData?.options || {};
+                    const mcqOptionsFromGroup = Array.isArray(groupOptionsData?.options)
+                      ? groupOptionsData.options
+                      : Array.isArray(groupOptionsData)
+                        ? groupOptionsData
+                        : [];
+                    const mcqOptions = mcqOptionsFromGroup.length > 0
+                      ? mcqOptionsFromGroup
+                      : extractOptions((groupQuestion as any)?.options);
+
+                    const optionFormat =
+                      groupOptionsData?.option_format || (groupData as any)?.option_format || (groupQuestion as any)?.option_format || 'A';
                     
                     return (
                       <div 

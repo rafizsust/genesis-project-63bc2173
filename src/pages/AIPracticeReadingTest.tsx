@@ -163,6 +163,12 @@ export default function AIPracticeReadingTest() {
           instruction: group.instruction || null,
         });
 
+        const normalizeOptions = (raw: any): string[] | null => {
+          if (Array.isArray(raw)) return raw;
+          if (raw && typeof raw === 'object' && Array.isArray(raw.options)) return raw.options;
+          return null;
+        };
+
         group.questions.forEach((q) => {
           // For TABLE_COMPLETION, get table_data from group options if not on question
           const tableData = q.table_data || (group.options as any)?.table_data || null;
@@ -173,7 +179,7 @@ export default function AIPracticeReadingTest() {
             question_number: q.question_number,
             question_type: questionType,
             question_text: q.question_text,
-            options: (q as any).options || null,
+            options: normalizeOptions((q as any).options),
             correct_answer: q.correct_answer,
             instruction: null,
             passage_id: passageId,
@@ -572,10 +578,14 @@ export default function AIPracticeReadingTest() {
   const getMaxAnswers = useCallback((questionGroupId: string | null) => {
     if (!questionGroupId) return 2;
     const group = questionGroups.find(g => g.id === questionGroupId);
-    if (group?.options?.max_answers) {
-      return group.options.max_answers;
-    }
-    return 2;
+    if (!group) return 2;
+
+    // Only meaningful for MCQ multiple; keep other types unchanged.
+    if (group.question_type !== 'MULTIPLE_CHOICE_MULTIPLE') return 2;
+
+    const rangeCount = Math.max(0, (group.end_question ?? 0) - (group.start_question ?? 0) + 1);
+    const max = Number((group.options as any)?.max_answers ?? rangeCount ?? 2);
+    return Number.isFinite(max) && max > 0 ? max : 2;
   }, [questionGroups]);
 
   const getMatchingSentenceEndingsGroupOptions = useCallback((questionGroupId: string | null): string[] => {
