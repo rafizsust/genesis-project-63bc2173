@@ -2232,25 +2232,34 @@ serve(async (req) => {
               const normalizeWordBank = (raw: any): Array<{ id: string; text: string }> => {
                 if (!Array.isArray(raw)) return [];
 
+                // Only treat a leading A–H as a label when it's followed by a real separator.
+                // This prevents corrupting normal words that start with A–H (e.g., "expression").
+                const parseLabeled = (value: string) => {
+                  const trimmed = value.trim();
+                  return trimmed.match(/^([A-H])(?:[\,\)\.\:]\s*|\s+)(.+)$/i);
+                };
+
                 return raw
                   .map((item: any, idx: number) => {
                     if (typeof item === 'string') {
                       const trimmed = item.trim();
-                      const m = trimmed.match(/^([A-H])[,\)\.\:]?\s*(.+)$/i);
+                      const m = parseLabeled(trimmed);
                       const id = (m?.[1] ?? String.fromCharCode(65 + idx)).toUpperCase();
                       const text = (m?.[2] ?? trimmed).trim();
                       return { id, text };
                     }
 
                     if (item && typeof item === 'object') {
-                      const rawId = String(item.id ?? item.letter ?? String.fromCharCode(65 + idx)).trim();
-                      const fallbackId = rawId ? rawId[0] : String.fromCharCode(65 + idx);
-                      const id = fallbackId.toUpperCase();
+                      const rawId = String(item.id ?? item.letter ?? '').trim();
+                      const fallbackId = String.fromCharCode(65 + idx);
+                      const idFromField = rawId || fallbackId;
 
                       const rawText = String(item.text ?? item.label ?? item.option ?? '').trim();
-                      const m = rawText.match(/^([A-H])[,\)\.\:]?\s*(.+)$/i);
+                      const m = parseLabeled(rawText);
                       const text = (m?.[2] ?? rawText).trim();
-                      const finalId = (m?.[1] ? m[1].toUpperCase() : id);
+
+                      const idFromText = m?.[1] ? m[1].toUpperCase() : null;
+                      const finalId = idFromText ?? (idFromField.length === 1 ? idFromField.toUpperCase() : idFromField);
 
                       return { id: finalId, text };
                     }
