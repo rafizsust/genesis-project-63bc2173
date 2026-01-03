@@ -351,7 +351,7 @@ export async function saveGeneratedTestAsync(test: GeneratedTest, userId: string
   const strippedTest = stripBase64Data(test);
 
   // Insert the stripped test first
-  const { error: insertError } = await supabase.from('ai_practice_tests').insert({
+  const { data: insertedRow, error: insertError } = await supabase.from('ai_practice_tests').insert({
     id: test.id,
     user_id: userId,
     module: test.module,
@@ -366,14 +366,20 @@ export async function saveGeneratedTestAsync(test: GeneratedTest, userId: string
     audio_url: test.audioUrl ?? null,
     audio_format: test.audioFormat ?? null,
     sample_rate: test.sampleRate ?? null,
-  });
+  }).select('audio_url').single();
 
   if (insertError) {
     console.error('Failed to save AI practice test to Supabase:', insertError);
     throw insertError;
   }
 
-  // If this is a listening test, upload a WAV so history/retake can play audio.
+  // For preset tests, the DB trigger populates audio_url - update cache with trigger value
+  if (insertedRow?.audio_url && !test.audioUrl) {
+    currentTestCache = { ...(currentTestCache ?? test), audioUrl: insertedRow.audio_url };
+    console.log('[saveGeneratedTestAsync] Updated cache with trigger-populated audio_url:', insertedRow.audio_url);
+  }
+
+  // If this is a listening test with base64 audio (non-preset), upload a WAV so history/retake can play audio.
   if (test.module === 'listening' && test.audioBase64) {
     try {
       const pcmBytes = Uint8Array.from(atob(test.audioBase64), (c) => c.charCodeAt(0));
