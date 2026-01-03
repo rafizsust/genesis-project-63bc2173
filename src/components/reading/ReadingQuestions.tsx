@@ -490,6 +490,8 @@ export function ReadingQuestions({
                 case 'SHORT_ANSWER':
                 case 'NOTE_COMPLETION':
                   return "Write **NO MORE THAN TWO WORDS** from the passage for each answer.";
+                case 'TABLE_COMPLETION':
+                  return "Complete the table below. Choose **NO MORE THAN THREE WORDS** from the passage for each answer.";
                 case 'SUMMARY_COMPLETION':
                 case 'SUMMARY_WORD_BANK':
                   // Word bank questions use drag-drop, so instruction should reflect that

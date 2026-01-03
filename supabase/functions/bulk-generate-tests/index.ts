@@ -750,12 +750,12 @@ Return ONLY valid JSON:
       return basePrompt + `Create a table completion task with ${questionCount} blanks to fill.
 
 CRITICAL RULES - FOLLOW EXACTLY:
-1. WORD LIMIT: Maximum TWO words per answer. STRICTLY ENFORCED.
-   - Every answer MUST be 1 or 2 words maximum
-   - NEVER use 3+ word answers - this violates IELTS standards
-   - Vary the lengths naturally: mix of 1-word and 2-word answers
-   - Example valid answers: "pollution" (1 word), "water supply" (2 words)
-   - Example INVALID: "clean water supply" (3 words - NEVER DO THIS)
+1. WORD LIMIT: Maximum THREE words per answer. STRICTLY ENFORCED.
+   - Every answer MUST be 1, 2, or 3 words maximum
+   - NEVER use 4+ word answers - this violates IELTS standards
+   - Vary the lengths naturally: mix of 1-word, 2-word, and 3-word answers
+   - Example valid answers: "pollution" (1 word), "water supply" (2 words), "clean water supply" (3 words)
+   - Example INVALID: "the clean water supply" (4 words - NEVER DO THIS)
 2. Tables MUST have EXACTLY 3 COLUMNS (no more, no less).
 3. Use inline blanks with __ (double underscores) within cell content, NOT separate cells for blanks.
    - Example: "Clean air and water, pollination of crops, and __" where __ is the blank
@@ -766,7 +766,7 @@ CRITICAL RULES - FOLLOW EXACTLY:
 Return ONLY valid JSON in this exact format:
 {
   "passage": {"title": "Title", "content": "Full passage with paragraph labels [A], [B], etc."},
-  "instruction": "Complete the table below. Choose NO MORE THAN TWO WORDS from the passage for each answer.",
+  "instruction": "Complete the table below. Choose NO MORE THAN THREE WORDS from the passage for each answer.",
   "table_data": [
     [{"content": "Category", "is_header": true}, {"content": "Details", "is_header": true}, {"content": "Impact/Challenge", "is_header": true}],
     [{"content": "First item"}, {"content": "Description text and __", "has_question": true, "question_number": 1}, {"content": "Positive effect"}],

@@ -2135,6 +2135,20 @@ serve(async (req) => {
               }
             }
 
+            // Ensure bulk/admin presets for TABLE_COMPLETION carry table_data into group options
+            // The bulk-generate-tests prompt outputs table_data at the root level of the payload.
+            if (type === 'TABLE_COMPLETION' && Array.isArray(payload.table_data)) {
+              if (Array.isArray(groupOptions)) {
+                groupOptions = { options: groupOptions };
+              }
+              if (!groupOptions || typeof groupOptions !== 'object') {
+                groupOptions = {};
+              }
+              if (!groupOptions.table_data) {
+                groupOptions = { ...groupOptions, table_data: payload.table_data };
+              }
+            }
+
             // For MULTIPLE_CHOICE_MULTIPLE: Extract max_answers from first question and propagate to group options
             // This ensures the renderer shows correct "Select X answers" instruction
             if (type === 'MULTIPLE_CHOICE_MULTIPLE') {
