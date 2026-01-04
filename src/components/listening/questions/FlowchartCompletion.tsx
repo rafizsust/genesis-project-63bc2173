@@ -48,11 +48,8 @@ export function FlowchartCompletion({
       .replace(new RegExp(`\\[${questionNumber}\\]`, 'g'), '')
       .replace(new RegExp(`\\bQ\\s*${questionNumber}\\b\\.?`, 'gi'), '')
       .replace(new RegExp(`^\\s*${questionNumber}\\s*[\\).:-]\\s*`, 'g'), '');
-
-    // Remove cases like "1__" / "1_" / "__1" around blanks
-    out = out
-      .replace(new RegExp(`\\b${questionNumber}\\s*_{1,}`, 'g'), '_')
-      .replace(new RegExp(`_{1,}\\s*${questionNumber}\\b`, 'g'), '_');
+    // Note: do NOT try to rewrite underscore blank markers here; we keep them intact
+    // so the inline blank detection can replace them with the input.
 
     return out.replace(/\s{2,}/g, ' ').trim();
   };
@@ -103,12 +100,19 @@ export function FlowchartCompletion({
                       const match = displayLabel.match(blankPattern);
 
                       if (match && match.index !== undefined) {
-                        const before = displayLabel.substring(0, match.index);
+                        const beforeRaw = displayLabel.substring(0, match.index);
                         const after = displayLabel.substring(match.index + match[0].length);
+
+                        // If the match is just underscores ("__"), the number may remain in `beforeRaw` (e.g. "1__").
+                        // Remove the trailing question number to ensure it only appears in the placeholder.
+                        const before = beforeRaw
+                          .replace(new RegExp(`\\b${step.questionNumber}\\b\\s*$`), '')
+                          .replace(/\s{2,}/g, ' ')
+                          .trimEnd();
 
                         return (
                           <span className="text-muted-foreground text-sm">
-                            {before}{' '}
+                            {before}{before ? ' ' : null}
                             <Input
                               type="text"
                               value={answer || ''}
@@ -122,7 +126,7 @@ export function FlowchartCompletion({
                               )}
                               onClick={(e) => e.stopPropagation()}
                             />
-                            {' '}{after}
+                            {after ? ` ${after}` : null}
                           </span>
                         );
                       }
