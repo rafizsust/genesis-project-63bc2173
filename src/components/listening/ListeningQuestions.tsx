@@ -652,10 +652,9 @@ export function ListeningQuestions({
                   // 2. Extract Props
                   const title = opts?.title || opts?.flowchart_title || group.group_heading || '';
                   const direction = opts?.direction || 'vertical';
-                  
-                  // 3. Fallback Instruction (Standard IELTS Limit)
-                  const instruction = group.instruction || "Choose NO MORE THAN THREE WORDS AND/OR A NUMBER from the passage for each answer.";
-                  
+
+                  // Instruction is already rendered in the group header above; avoid duplicating it inside the flowchart.
+
                   // 4. Map Steps (Normalize 'label' vs 'text')
                   const rawSteps = opts?.flowchart_steps || opts?.steps || [];
                   const steps = (Array.isArray(rawSteps) ? rawSteps : []).map((s: any, idx: number) => ({
@@ -668,7 +667,6 @@ export function ListeningQuestions({
                   return (
                     <FlowchartCompletion
                       title={title}
-                      instruction={instruction}
                       steps={steps}
                       direction={direction}
                       answers={answers}

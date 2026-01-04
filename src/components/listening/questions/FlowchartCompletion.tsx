@@ -11,7 +11,7 @@ interface FlowchartStep {
 
 interface FlowchartCompletionProps {
   title?: string;
-  instruction?: string;
+  instruction?: string; // kept for compatibility (some callers may still pass it)
   steps: FlowchartStep[];
   direction?: 'vertical' | 'horizontal';
   answers: Record<number, string>;
@@ -22,7 +22,7 @@ interface FlowchartCompletionProps {
 
 export function FlowchartCompletion({
   title,
-  instruction,
+  // instruction is intentionally not rendered here because ListeningQuestions already renders the group instruction.
   steps,
   direction = 'vertical',
   answers,
@@ -33,100 +33,114 @@ export function FlowchartCompletion({
   const isVertical = direction === 'vertical';
   const ArrowIcon = isVertical ? ArrowDown : ArrowRight;
 
-  // FIX 1: Prevent Title/Instruction Duplication
   // If title looks like an instruction (contains "words"), don't render it as a header
   const isTitleInstruction = title && /words|no more than/i.test(title);
   const displayTitle = isTitleInstruction ? null : title;
 
+  const sanitizeLabel = (label: string, questionNumber?: number) => {
+    if (!questionNumber) return label;
+
+    let out = label;
+
+    // Remove explicit question markers anywhere in the string
+    out = out
+      .replace(new RegExp(`\\(${questionNumber}\\)`, 'g'), '')
+      .replace(new RegExp(`\\[${questionNumber}\\]`, 'g'), '')
+      .replace(new RegExp(`\\bQ\\s*${questionNumber}\\b\\.?`, 'gi'), '')
+      .replace(new RegExp(`^\\s*${questionNumber}\\s*[\\).:-]\\s*`, 'g'), '');
+
+    // Remove cases like "1__" / "1_" / "__1" around blanks
+    out = out
+      .replace(new RegExp(`\\b${questionNumber}\\s*_{1,}`, 'g'), '_')
+      .replace(new RegExp(`_{1,}\\s*${questionNumber}\\b`, 'g'), '_');
+
+    return out.replace(/\s{2,}/g, ' ').trim();
+  };
+
   return (
     <div className="space-y-3" style={{ fontSize: `${fontSize}px` }}>
       {/* Header Section */}
-      <div className="mb-4">
-        {displayTitle && (
+      {displayTitle && (
+        <div className="mb-4">
           <h4 className="font-semibold text-base text-foreground mb-2">{displayTitle}</h4>
+        </div>
+      )}
+
+      <div
+        className={cn(
+          'flex items-center justify-center gap-2',
+          isVertical ? 'flex-col' : 'flex-row flex-wrap'
         )}
-        {instruction && (
-          <div className="p-3 bg-muted/50 rounded-lg border border-border">
-            <p className="text-sm text-foreground italic">
-              {instruction}
-            </p>
-          </div>
-        )}
-      </div>
-      
-      <div className={cn(
-        "flex items-center justify-center gap-2",
-        isVertical ? "flex-col" : "flex-row flex-wrap"
-      )}>
+      >
         {steps.map((step, index) => {
           const isActive = step.questionNumber === currentQuestion;
           const answer = step.questionNumber ? answers[step.questionNumber] : undefined;
           const isLast = index === steps.length - 1;
 
-          // FIX 2: Strip Question Number from Text
-          // Remove "31.", "(31)", "Q31" from the start of the label to avoid duplication
-          let displayLabel = step.label;
-          if (step.questionNumber) {
-             displayLabel = displayLabel.replace(new RegExp(`^\\(?${step.questionNumber}[\\).\\s]*`, 'i'), '').trim();
-          }
+          const displayLabel = sanitizeLabel(step.label, step.questionNumber);
 
           return (
-            <div key={step.id} className={cn(
-              "flex items-center",
-              isVertical ? "flex-col" : "flex-row"
-            )}>
+            <div
+              key={step.id}
+              className={cn('flex items-center', isVertical ? 'flex-col' : 'flex-row')}
+            >
+              {/* Step Box */}
               <div
                 className={cn(
-                  "relative border-2 rounded-lg p-4 min-w-[180px] max-w-[280px] text-center transition-all",
+                  'relative border-2 rounded-lg p-4 min-w-[180px] max-w-[280px] text-center transition-all',
                   isActive
-                    ? "border-primary bg-primary/5 shadow-md"
-                    : "border-border bg-card hover:border-muted-foreground/50"
+                    ? 'border-primary bg-primary/5 shadow-md'
+                    : 'border-border bg-card hover:border-muted-foreground/50'
                 )}
               >
                 {step.isBlank && step.questionNumber ? (
                   <div className="inline items-baseline flex-wrap">
                     {(() => {
-                      // Inline Input Logic
-                      // Match placeholders: (31), [31], ____, etc.
-                      const blankPattern = new RegExp(`\\(${step.questionNumber}\\)|\\[${step.questionNumber}\\]|_{2,}|\\.\\.\\.|______`);
+                      // Match placeholders: (1), [1], 1__, ____, ..., ______
+                      const blankPattern = new RegExp(
+                        `\\(${step.questionNumber}\\)|\\[${step.questionNumber}\\]|\\b${step.questionNumber}\\s*_{1,}|_{2,}|\\.{3,}|______`
+                      );
                       const match = displayLabel.match(blankPattern);
-                      
+
                       if (match && match.index !== undefined) {
                         const before = displayLabel.substring(0, match.index);
                         const after = displayLabel.substring(match.index + match[0].length);
-                        
+
                         return (
                           <span className="text-muted-foreground text-sm">
-                            {before}
+                            {before}{' '}
                             <Input
                               type="text"
                               value={answer || ''}
                               onChange={(e) => onAnswerChange(step.questionNumber!, e.target.value)}
                               placeholder={`(${step.questionNumber})`}
                               className={cn(
-                                "inline-block h-7 w-[100px] text-sm rounded-[3px] text-center font-bold text-primary mx-1 align-middle",
-                                isActive ? "border-primary ring-1 ring-primary/20" : "border-slate-300"
+                                'inline-block h-7 w-[100px] text-sm rounded-[3px] text-center font-bold text-primary mx-1 align-middle',
+                                isActive
+                                  ? 'border-primary ring-1 ring-primary/20'
+                                  : 'border-slate-300'
                               )}
                               onClick={(e) => e.stopPropagation()}
                             />
-                            {after}
+                            {' '}{after}
                           </span>
                         );
                       }
-                      
+
                       // Fallback Layout (Label + Input)
                       return (
                         <>
-                          {/* Only render label if it still has content after stripping number */}
-                          {displayLabel && <p className="text-muted-foreground text-sm mb-2">{displayLabel}</p>}
+                          {displayLabel && (
+                            <p className="text-muted-foreground text-sm mb-2">{displayLabel}</p>
+                          )}
                           <Input
                             type="text"
                             value={answer || ''}
                             onChange={(e) => onAnswerChange(step.questionNumber!, e.target.value)}
                             placeholder={`(${step.questionNumber})`}
                             className={cn(
-                              "h-8 w-full text-sm font-bold text-center text-primary",
-                              isActive ? "border-primary" : "border-slate-300"
+                              'h-8 w-full text-sm font-bold text-center text-primary',
+                              isActive ? 'border-primary' : 'border-slate-300'
                             )}
                             onClick={(e) => e.stopPropagation()}
                           />
@@ -139,11 +153,14 @@ export function FlowchartCompletion({
                 )}
               </div>
 
+              {/* Arrow Connector */}
               {!isLast && (
-                <div className={cn(
-                  "flex items-center justify-center text-muted-foreground",
-                  isVertical ? "py-2" : "px-2"
-                )}>
+                <div
+                  className={cn(
+                    'flex items-center justify-center text-muted-foreground',
+                    isVertical ? 'py-2' : 'px-2'
+                  )}
+                >
                   <ArrowIcon className="w-5 h-5" />
                 </div>
               )}
