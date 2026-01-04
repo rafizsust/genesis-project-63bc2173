@@ -1,5 +1,5 @@
 import { cn } from '@/lib/utils';
-import { FillInBlank, ListeningTableCompletion, MatchingCorrectLetter, Maps, MapLabeling, MapLabelingTable, MultipleChoiceSingle, MultipleChoiceMultiple, MultipleChoiceMultipleQuestions, DragAndDropOptions, FlowchartCompletion, NoteStyleFillInBlank } from './questions';
+import { FillInBlank, ListeningTableCompletion, MatchingCorrectLetter, Maps, MapLabeling, MapLabelingTable, MultipleChoiceSingle, MultipleChoiceMultiple, DragAndDropOptions, FlowchartCompletion, NoteStyleFillInBlank } from './questions';
 import { QuestionTextWithTools } from '@/components/common/QuestionTextWithTools';
 import { TableData, TableEditorData } from '@/components/admin/ListeningQuestionGroupEditor'; // Import types from admin editor
 
@@ -589,7 +589,7 @@ export function ListeningQuestions({
                         <FillInBlank
                           key={q.id}
                           testId={testId}
-                          question={{ ...q, question_type: 'FILL_IN_BLANK' }}
+                          question={q}
                           answer={answers[q.question_number]}
                           onAnswerChange={(value) => onAnswerChange(q.question_number, value)}
                           renderRichText={renderRichText}
