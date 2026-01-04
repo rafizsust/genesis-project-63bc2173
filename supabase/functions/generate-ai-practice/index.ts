@@ -1889,18 +1889,32 @@ Return ONLY valid JSON:
 }`;
 
     case 'MULTIPLE_CHOICE_MULTIPLE':
-      return basePrompt + `2. Create 1 multiple choice question where test-takers must select TWO correct answers.
+      // For MCQ Multiple, we create ONE question "set" where test-takers must pick 3 answers.
+      // The question group spans 3 question numbers (Questions 1-3) with 6 options (A-F).
+      // This mirrors the reading MCMA format exactly.
+      return basePrompt + `2. Create ONE multiple choice question set where test-takers must select THREE correct answers from six options (A-F).
+
+CRITICAL REQUIREMENTS:
+- The question set spans Questions 1 to 3 (3 question numbers)
+- Return EXACTLY 3 question objects with question_number 1, 2, and 3
+- ALL 3 question objects must have IDENTICAL content (same question_text, same options, same correct_answer, same explanation)
+- Generate exactly 6 options (A through F) with full descriptive text
+- The correct_answer must be a comma-separated list of 3 letters (e.g., "A,C,E" or "B,D,F")
+- DO NOT always use the same letters - randomize which 3 options are correct
+- Each option must be in format "A Full description of option A" (letter followed by space then text)
 
 Return ONLY valid JSON:
 {
-  "dialogue": "Speaker1: There are several benefits...<break time='500ms'/>",
+  "dialogue": "Speaker1: There are several key benefits to this approach...<break time='500ms'/> First, it improves efficiency...<break time='300ms'/> Additionally, it reduces costs...",
   "speaker_names": {"Speaker1": "Expert"},
-  "instruction": "Choose TWO letters, A-E.",
+  "instruction": "Questions 1-3. Choose THREE letters, A-F.",
+  "max_answers": 3,
   "questions": [
-    {"question_number": 1, "question_text": "Which TWO benefits are mentioned?", "options": ["A First", "B Second", "C Third", "D Fourth", "E Fifth"], "correct_answer": "B,D", "explanation": "B and D are mentioned", "max_answers": 2}
+    {"question_number": 1, "question_text": "Which THREE benefits are mentioned by the speaker?", "options": ["A Improved efficiency in operations", "B Better customer satisfaction", "C Reduced overall costs", "D Enhanced employee morale", "E Faster processing times", "F Greater market reach"], "correct_answer": "A,C,E", "explanation": "A is correct because efficiency is mentioned. C is correct because cost reduction is discussed. E is correct because faster processing is highlighted.", "max_answers": 3},
+    {"question_number": 2, "question_text": "Which THREE benefits are mentioned by the speaker?", "options": ["A Improved efficiency in operations", "B Better customer satisfaction", "C Reduced overall costs", "D Enhanced employee morale", "E Faster processing times", "F Greater market reach"], "correct_answer": "A,C,E", "explanation": "A is correct because efficiency is mentioned. C is correct because cost reduction is discussed. E is correct because faster processing is highlighted.", "max_answers": 3},
+    {"question_number": 3, "question_text": "Which THREE benefits are mentioned by the speaker?", "options": ["A Improved efficiency in operations", "B Better customer satisfaction", "C Reduced overall costs", "D Enhanced employee morale", "E Faster processing times", "F Greater market reach"], "correct_answer": "A,C,E", "explanation": "A is correct because efficiency is mentioned. C is correct because cost reduction is discussed. E is correct because faster processing is highlighted.", "max_answers": 3}
   ]
 }`;
-
     case 'MATCHING_CORRECT_LETTER':
       return basePrompt + `2. Create ${effectiveQuestionCount} matching questions.
 
@@ -2946,6 +2960,18 @@ serve(async (req) => {
             throw new Error(`Question ${q.question_number || '?'} missing correct_answer`);
           }
         }
+        
+        // MCMA-specific validation: must have options with at least 5 choices
+        if (questionType === 'MULTIPLE_CHOICE_MULTIPLE') {
+          const firstQ = parsed.questions[0];
+          if (!firstQ?.options || !Array.isArray(firstQ.options) || firstQ.options.length < 5) {
+            throw new Error('MULTIPLE_CHOICE_MULTIPLE requires at least 5 options (A-E or A-F). AI returned invalid or missing options.');
+          }
+          // Ensure we have 3 questions for MCMA
+          if (parsed.questions.length < 3) {
+            throw new Error('MULTIPLE_CHOICE_MULTIPLE requires exactly 3 question objects. AI returned fewer.');
+          }
+        }
       } catch (e) {
         console.error("Failed to parse/validate listening response:", e);
         // Refund credits on parse failure
@@ -3041,6 +3067,15 @@ ${parsed.dialogue}`;
         groupOptions = { note_sections: parsed.note_sections };
       } else if (questionType === 'DRAG_AND_DROP_OPTIONS') {
         groupOptions = { options: parsed.drag_options || [] };
+      } else if (questionType === 'MULTIPLE_CHOICE_MULTIPLE' && parsed.questions?.[0]?.options) {
+        // MCMA: Include options and max_answers in groupOptions for the renderer (matching reading MCMA format)
+        const mcmaOptions = parsed.questions[0].options;
+        const mcmaMaxAnswers = parsed.max_answers ?? parsed.questions[0]?.max_answers ?? 3;
+        groupOptions = { 
+          options: mcmaOptions, 
+          max_answers: mcmaMaxAnswers,
+          option_format: 'A'
+        };
       } else if (questionType.includes('MULTIPLE_CHOICE') && parsed.questions?.[0]?.options) {
         groupOptions = { options: parsed.questions[0].options };
       } else if (questionType === 'MATCHING_CORRECT_LETTER' && parsed.options) {
@@ -3055,7 +3090,12 @@ ${parsed.dialogue}`;
         correct_answer: q.correct_answer,
         explanation: q.explanation,
         options: q.options || null,
+        // Include max_answers for MCMA
+        max_answers: questionType === 'MULTIPLE_CHOICE_MULTIPLE' ? (q.max_answers ?? parsed.max_answers ?? 3) : undefined,
       }));
+
+      // For MCMA, ensure we have exactly 3 questions and end_question is 3
+      const endQuestion = questionType === 'MULTIPLE_CHOICE_MULTIPLE' ? 3 : questions.length;
 
       const responsePayload = {
         testId,
@@ -3067,10 +3107,10 @@ ${parsed.dialogue}`;
         sampleRate: audio?.sampleRate || null,
         questionGroups: [{
           id: groupId,
-          instruction: parsed.instruction || `Questions 1-${questions.length}`,
+          instruction: parsed.instruction || `Questions 1-${endQuestion}`,
           question_type: questionType,
           start_question: 1,
-          end_question: questions.length,
+          end_question: endQuestion,
           options: groupOptions,
           questions,
         }],
