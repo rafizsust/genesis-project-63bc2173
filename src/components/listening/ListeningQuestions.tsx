@@ -87,6 +87,52 @@ export function ListeningQuestions({
     return String.fromCharCode(65 + index);
   };
 
+  // Normalize AI-practice listening table_data which may come as:
+  // { headers: string[], rows: Array<Array<{text?:string,isBlank?:boolean,questionNumber?:number}>> }
+  const normalizeAiListeningTableData = (raw: any): TableData => {
+    if (!raw) return [];
+
+    // Already in our expected TableData format
+    if (Array.isArray(raw)) return raw as TableData;
+
+    const headers = Array.isArray(raw.headers) ? raw.headers : [];
+    const rows = Array.isArray(raw.rows) ? raw.rows : [];
+
+    const headerRow = headers.map((h: any) => ({
+      has_question: false,
+      content: String(h ?? ''),
+      alignment: 'left' as const,
+    }));
+
+    const bodyRows = rows.map((r: any[]) =>
+      (Array.isArray(r) ? r : []).map((cell: any) => {
+        // Blank cell (AI format)
+        if (cell?.isBlank) {
+          return {
+            has_question: true,
+            content: '',
+            question_number: Number(cell.questionNumber),
+            alignment: 'left' as const,
+          };
+        }
+
+        // Text cell (AI format)
+        const text = typeof cell === 'string'
+          ? cell
+          : (cell?.text ?? cell?.content ?? '');
+
+        return {
+          has_question: false,
+          content: String(text ?? ''),
+          alignment: 'left' as const,
+        };
+      })
+    );
+
+    if (headerRow.length > 0) return [headerRow, ...bodyRows];
+    return bodyRows;
+  };
+
   const renderQuestionInput = (question: Question, group: QuestionGroup) => {
     const answer = answers[question.question_number];
     const handleChange = (value: string) => onAnswerChange(question.question_number, value);
@@ -342,20 +388,23 @@ export function ListeningQuestions({
                 let tableHeadingAlignment: 'left' | 'center' | 'right' | undefined;
                 
                 if (Array.isArray(rawTableData)) {
-                  // Direct array format - could be from AI practice or admin
-                  // AI practice format: array of arrays with objects like [{content: "...", is_header: true}, ...]
+                  // Direct TableData format (admin or already-normalized)
                   tableRows = rawTableData;
                   tableHeading = undefined;
                   tableHeadingAlignment = undefined;
+                } else if (rawTableData?.headers && rawTableData?.rows) {
+                  // AI practice format: { headers, rows } (needs conversion to TableData)
+                  tableRows = normalizeAiListeningTableData(rawTableData);
+                  tableHeading = rawTableData.heading;
+                  tableHeadingAlignment = rawTableData.headingAlignment;
                 } else if (rawTableData?.rows) {
-                  // Object format with rows property
+                  // Admin "TableEditorData" format: { rows, heading?, headingAlignment? }
                   tableRows = rawTableData.rows;
                   tableHeading = rawTableData.heading;
                   tableHeadingAlignment = rawTableData.headingAlignment;
                 } else {
                   tableRows = [];
                 }
-                
                 // Skip rendering if no valid table data
                 if (!tableRows || tableRows.length === 0) return null;
                 

@@ -108,9 +108,9 @@ export function ListeningTableCompletion({
               <tr key={rowIndex}>
                 {row.map((cell: TableCellData, colIndex) => {
                   const isQuestionCell = cell.has_question;
-                  
-                  // For question cells, split by _____ to find blank positions
-                  const parts = isQuestionCell ? cell.content.split('_____') : [cell.content];
+
+                  // For question cells, split by underscore marker (2+ underscores)
+                  const parts = isQuestionCell ? cell.content.split(/_{2,}/) : [cell.content];
                   
                   // Handle answers for cells with blanks
                   const currentAnswerString = answers[cell.question_number!] || '';

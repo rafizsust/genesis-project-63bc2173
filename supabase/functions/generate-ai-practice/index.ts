@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { crypto } from "https://deno.land/std@0.168.0/crypto/mod.ts";
+import { encode as base64Encode } from "https://deno.land/std@0.168.0/encoding/base64.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -764,9 +765,10 @@ function getLastTTSError(): string {
 }
 
 // Generate TTS audio using Gemini with retry logic, configurable voices, and DB key rotation
+// NOTE: For dialogues, we stitch per-speaker segments to guarantee distinct voices.
 async function generateAudio(
-  apiKey: string, 
-  script: string, 
+  apiKey: string,
+  script: string,
   speakerConfig?: SpeakerConfigInput,
   maxRetries = 3,
   options?: {
@@ -775,11 +777,246 @@ async function generateAudio(
   }
 ): Promise<{ audioBase64: string; sampleRate: number } | null> {
   lastTTSError = null;
-  
-  // Get voice names from config or use defaults
+
+  // Voices from config (or sensible defaults)
   const speaker1Voice = speakerConfig?.speaker1?.voiceName || 'Kore';
-  const speaker2Voice = speakerConfig?.speaker2?.voiceName || 'Puck';
-  const useTwoSpeakers = speakerConfig?.useTwoSpeakers !== false;
+  const speaker2Voice = speakerConfig?.speaker2?.voiceName || 'Aoede';
+
+  // Default to 2 speakers unless explicitly disabled
+  const requestedTwoSpeakers = speakerConfig?.useTwoSpeakers !== false;
+
+  // DB key rotation support for TTS
+  const dbKeys = options?.dbKeys || [];
+  const serviceClient = options?.serviceClient;
+  let currentKeyIndex = 0;
+  let currentApiKey = apiKey;
+  let currentKeyRecord: ApiKeyRecord | null = null;
+
+  if (dbKeys.length > 0) {
+    currentKeyRecord = dbKeys[0];
+    currentApiKey = currentKeyRecord.key_value;
+    console.log(`TTS using DB-managed key 1/${dbKeys.length}`);
+  }
+
+  const rotateKeyIfPossible = async (deactivate: boolean) => {
+    if (dbKeys.length === 0) return false;
+    if (currentKeyIndex >= dbKeys.length - 1) return false;
+
+    if (serviceClient && currentKeyRecord) {
+      await incrementKeyErrorCount(serviceClient, currentKeyRecord.id, deactivate);
+    }
+
+    currentKeyIndex++;
+    currentKeyRecord = dbKeys[currentKeyIndex];
+    currentApiKey = currentKeyRecord.key_value;
+    console.log(`TTS switched to DB key ${currentKeyIndex + 1}/${dbKeys.length}`);
+    return true;
+  };
+
+  const callGeminiTtsOnce = async (
+    text: string,
+    voiceName: string,
+  ): Promise<Uint8Array | null> => {
+    // Keep prompts tiny (cheaper + more reliable)
+    const ttsPrompt = `Read this clearly for a listening test. Use natural pacing and brief pauses.\n\n${text}`;
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const response = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${currentApiKey}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: ttsPrompt }] }],
+              generationConfig: {
+                responseModalities: ["AUDIO"],
+                speechConfig: {
+                  voiceConfig: {
+                    prebuiltVoiceConfig: { voiceName },
+                  },
+                },
+              },
+            }),
+          }
+        );
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          console.error(`TTS failed (attempt ${attempt}/${maxRetries}) voice=${voiceName}:`, errorText);
+
+          // Rotate key on 429/403 (doesn't consume a retry)
+          if (response.status === 429) {
+            if (await rotateKeyIfPossible(false)) {
+              attempt--;
+              continue;
+            }
+            lastTTSError = 'All API keys have reached their rate limit for audio generation. Please wait a few minutes and try again.';
+          } else if (response.status === 403) {
+            if (await rotateKeyIfPossible(true)) {
+              attempt--;
+              continue;
+            }
+            lastTTSError = 'API access denied for audio generation. Please verify your Gemini API key has TTS permissions enabled.';
+          } else {
+            lastTTSError = `Audio generation failed with status ${response.status}. Please try again.`;
+          }
+
+          // Retry transient server errors
+          if ((response.status === 500 || response.status === 503) && attempt < maxRetries) {
+            const delay = Math.pow(2, attempt) * 1000;
+            await new Promise((resolve) => setTimeout(resolve, delay));
+            continue;
+          }
+
+          return null;
+        }
+
+        const data = await response.json();
+        const audioData = data.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data as string | undefined;
+        if (!audioData) {
+          lastTTSError = 'Audio generation returned empty response. Please try again.';
+          continue;
+        }
+
+        const pcmBytes = Uint8Array.from(atob(audioData), (c) => c.charCodeAt(0));
+        return pcmBytes;
+      } catch (err) {
+        console.error(`TTS error (attempt ${attempt}/${maxRetries}) voice=${voiceName}:`, err);
+        lastTTSError = `Connection error during audio generation: ${err instanceof Error ? err.message : 'Unknown error'}`;
+        if (attempt < maxRetries) {
+          const delay = Math.pow(2, attempt) * 1000;
+          await new Promise((resolve) => setTimeout(resolve, delay));
+          continue;
+        }
+        return null;
+      }
+    }
+
+    return null;
+  };
+
+  // --------------------------------------------------------------------------
+  // Multi-speaker stitching (guarantees distinct voices even if the script uses
+  // explicit names like "Tom:" / "Sarah:" instead of Speaker1/Speaker2).
+  // --------------------------------------------------------------------------
+  const speakerLineRegex = /^([^:]{1,40}):\s*(.+)$/;
+
+  const rawLines = script
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+
+  const detectedSpeakerLabels = new Set<string>();
+  for (const l of rawLines) {
+    const m = l.match(speakerLineRegex);
+    if (m) detectedSpeakerLabels.add(m[1].trim());
+  }
+
+  const shouldStitch = requestedTwoSpeakers && detectedSpeakerLabels.size >= 2;
+
+  if (shouldStitch) {
+    console.log(`[TTS] Stitching multi-speaker audio. speakers=${detectedSpeakerLabels.size}, lines=${rawLines.length}`);
+
+    const normalizeLabel = (label: string) => label.toLowerCase().replace(/\s+/g, '');
+
+    const fixedVoiceMap: Record<string, string> = {
+      speaker1: speaker1Voice,
+      speakerone: speaker1Voice,
+      speaker2: speaker2Voice,
+      speakertwo: speaker2Voice,
+    };
+
+    const femaleNameHints = new Set(getGenderAppropriateNames('female').map((n) => n.toLowerCase()));
+    const maleNameHints = new Set(getGenderAppropriateNames('male').map((n) => n.toLowerCase()));
+
+    const assignedVoicesByLabel = new Map<string, string>();
+    let nextAlternateIndex = 0;
+    const alternates = [speaker1Voice, speaker2Voice];
+
+    const getVoiceForLabel = (labelRaw: string) => {
+      const normalized = normalizeLabel(labelRaw);
+      const fixed = fixedVoiceMap[normalized];
+      if (fixed) return fixed;
+
+      const existing = assignedVoicesByLabel.get(labelRaw);
+      if (existing) return existing;
+
+      // Heuristic: try name-gender hint, otherwise alternate
+      const lower = labelRaw.toLowerCase();
+      let chosen: string;
+      if (femaleNameHints.has(lower)) chosen = speaker2Voice;
+      else if (maleNameHints.has(lower)) chosen = speaker1Voice;
+      else chosen = alternates[nextAlternateIndex++ % alternates.length];
+
+      assignedVoicesByLabel.set(labelRaw, chosen);
+      return chosen;
+    };
+
+    type Segment = { voiceName: string; text: string };
+    const segments: Segment[] = [];
+
+    const cleanText = (t: string) =>
+      t
+        .replace(/<break[^>]*\/>/gi, ' ... ')
+        .replace(/<\/??[^>]+>/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    for (const l of rawLines) {
+      const m = l.match(speakerLineRegex);
+      const label = m ? m[1].trim() : 'Narrator';
+      const content = cleanText(m ? m[2] : l);
+      if (!content) continue;
+
+      const voiceName = getVoiceForLabel(label);
+
+      // Coalesce consecutive segments by same voice to reduce API calls
+      const last = segments[segments.length - 1];
+      if (last && last.voiceName === voiceName) {
+        last.text = `${last.text} ${content}`;
+      } else {
+        segments.push({ voiceName, text: content });
+      }
+    }
+
+    const pcmChunks: Uint8Array[] = [];
+    let totalLen = 0;
+
+    for (let i = 0; i < segments.length; i++) {
+      const seg = segments[i];
+      console.log(`[TTS] segment ${i + 1}/${segments.length} voice=${seg.voiceName} chars=${seg.text.length}`);
+
+      const pcm = await callGeminiTtsOnce(seg.text, seg.voiceName);
+      if (!pcm) {
+        console.error('[TTS] Failed segment:', i + 1);
+        return null;
+      }
+
+      pcmChunks.push(pcm);
+      totalLen += pcm.length;
+
+      // Reset error count after success
+      if (serviceClient && currentKeyRecord) {
+        await resetKeyErrorCount(serviceClient, currentKeyRecord.id);
+      }
+    }
+
+    const merged = new Uint8Array(totalLen);
+    let offset = 0;
+    for (const c of pcmChunks) {
+      merged.set(c, offset);
+      offset += c.length;
+    }
+
+    const audioBase64 = base64Encode(merged);
+    return { audioBase64, sampleRate: 24000 };
+  }
+
+  // --------------------------------------------------------------------------
+  // Default path: single request (monologue or scripts without speaker lines)
+  // --------------------------------------------------------------------------
+  const useTwoSpeakers = requestedTwoSpeakers;
 
   const ttsPrompt = useTwoSpeakers
     ? `Read the following conversation slowly and clearly, as if for a language listening test. 
@@ -793,9 +1030,7 @@ Use a moderate speaking pace with natural pauses between sentences.
 
 ${script}`;
 
-  // Build speech config based on whether we have 1 or 2 speakers
-  // For single speaker (monologue), use voiceConfig instead of multiSpeakerVoiceConfig
-  let speechConfig;
+  let speechConfig: any;
   if (useTwoSpeakers) {
     speechConfig = {
       multiSpeakerVoiceConfig: {
@@ -806,32 +1041,19 @@ ${script}`;
       },
     };
   } else {
-    // Single speaker - use simple voiceConfig (NOT multiSpeakerVoiceConfig)
     speechConfig = {
       voiceConfig: {
-        prebuiltVoiceConfig: { voiceName: speaker1Voice }
+        prebuiltVoiceConfig: { voiceName: speaker1Voice },
       },
     };
   }
 
-  // DB key rotation support for TTS
-  const dbKeys = options?.dbKeys || [];
-  const serviceClient = options?.serviceClient;
-  let currentKeyIndex = 0;
-  let currentApiKey = apiKey;
-  let currentKeyRecord: ApiKeyRecord | null = null;
-  
-  // If we have DB keys, use them for rotation
-  if (dbKeys.length > 0) {
-    currentKeyRecord = dbKeys[0];
-    currentApiKey = currentKeyRecord.key_value;
-    console.log(`TTS using DB-managed key 1/${dbKeys.length}`);
-  }
-
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      console.log(`Generating TTS audio (attempt ${attempt}/${maxRetries}) with voices: ${speaker1Voice}${useTwoSpeakers ? `, ${speaker2Voice}` : ' (monologue)'}...`);
-      
+      console.log(
+        `Generating TTS audio (attempt ${attempt}/${maxRetries}) with voices: ${speaker1Voice}${useTwoSpeakers ? `, ${speaker2Voice}` : ' (monologue)'}...`
+      );
+
       const response = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${currentApiKey}`,
         {
@@ -850,73 +1072,60 @@ ${script}`;
       if (!response.ok) {
         const errorText = await response.text();
         console.error(`TTS failed (attempt ${attempt}):`, errorText);
-        
-        // Parse error for user-friendly message
-        try {
-          const errorData = JSON.parse(errorText);
-          const errorMessage = errorData?.error?.message || '';
-          const errorCode = errorData?.error?.code || response.status;
-          
-          // Check if we should rotate to next key (429 or 403)
-          if (response.status === 429 || response.status === 403 || errorCode === 429) {
-            // Try next DB key if available
-            if (dbKeys.length > 0 && currentKeyIndex < dbKeys.length - 1) {
-              console.log(`TTS key ${currentKeyIndex + 1} quota/permission issue, rotating to next key...`);
-              
-              // Increment error count for this key
-              if (serviceClient && currentKeyRecord) {
-                await incrementKeyErrorCount(serviceClient, currentKeyRecord.id, response.status === 403);
-              }
-              
-              currentKeyIndex++;
-              currentKeyRecord = dbKeys[currentKeyIndex];
-              currentApiKey = currentKeyRecord.key_value;
-              console.log(`TTS switched to DB key ${currentKeyIndex + 1}/${dbKeys.length}`);
-              continue; // Retry with new key (don't count as retry)
-            }
-            
-            if (response.status === 429 || errorCode === 429) {
-              lastTTSError = 'All API keys have reached their rate limit for audio generation. Please wait a few minutes and try again.';
-            } else {
-              lastTTSError = 'API access denied for audio generation. Please verify your Gemini API key has TTS permissions enabled.';
-            }
-          } else if (response.status === 400) {
-            lastTTSError = `Audio generation request was rejected: ${errorMessage.slice(0, 100)}. Please try again.`;
-          } else {
-            lastTTSError = `Audio generation failed (error ${errorCode}): ${errorMessage.slice(0, 100)}`;
+
+        if (response.status === 429) {
+          if (await rotateKeyIfPossible(false)) {
+            attempt--;
+            continue;
           }
-        } catch {
+          lastTTSError = 'All API keys have reached their rate limit for audio generation. Please wait a few minutes and try again.';
+        } else if (response.status === 403) {
+          if (await rotateKeyIfPossible(true)) {
+            attempt--;
+            continue;
+          }
+          lastTTSError = 'API access denied for audio generation. Please verify your Gemini API key has TTS permissions enabled.';
+        } else if (response.status === 400) {
+          lastTTSError = 'Audio generation request was rejected. Please try again.';
+        } else {
           lastTTSError = `Audio generation failed with status ${response.status}. Please try again.`;
         }
-        
+
         if ((response.status === 500 || response.status === 503) && attempt < maxRetries) {
           const delay = Math.pow(2, attempt) * 1000;
-          console.log(`Retrying TTS in ${delay}ms...`);
-          await new Promise(resolve => setTimeout(resolve, delay));
+          await new Promise((resolve) => setTimeout(resolve, delay));
           continue;
         }
+
         return null;
       }
 
       const data = await response.json();
       const audioData = data.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-      
+
       if (audioData) {
         console.log("TTS audio generated successfully");
+
+        if (serviceClient && currentKeyRecord) {
+          await resetKeyErrorCount(serviceClient, currentKeyRecord.id);
+        }
+
         return { audioBase64: audioData, sampleRate: 24000 };
-      } else {
-        lastTTSError = 'Audio generation returned empty response. Please try again.';
       }
+
+      lastTTSError = 'Audio generation returned empty response. Please try again.';
     } catch (err) {
       console.error(`TTS error (attempt ${attempt}):`, err);
       lastTTSError = `Connection error during audio generation: ${err instanceof Error ? err.message : 'Unknown error'}`;
+
       if (attempt < maxRetries) {
         const delay = Math.pow(2, attempt) * 1000;
-        await new Promise(resolve => setTimeout(resolve, delay));
+        await new Promise((resolve) => setTimeout(resolve, delay));
         continue;
       }
     }
   }
+
   return null;
 }
 
