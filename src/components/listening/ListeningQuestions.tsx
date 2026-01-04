@@ -152,9 +152,8 @@ export function ListeningQuestions({
         }
 
         // Plain text cell (AI format)
-        const text = typeof cell === 'string'
-          ? cell
-          : (cell?.text ?? cell?.content ?? '');
+        const text =
+          typeof cell === 'string' ? cell : (cell?.text ?? cell?.content ?? '');
 
         return {
           has_question: false,
@@ -164,8 +163,26 @@ export function ListeningQuestions({
       })
     );
 
-    if (headerRow.length > 0) return [headerRow, ...bodyRows];
-    return bodyRows;
+    // IMPORTANT: keep a consistent column count across all rows so the table can't "break"
+    const columnCount =
+      headerRow.length ||
+      Math.max(0, ...bodyRows.map((r: any[]) => (Array.isArray(r) ? r.length : 0)));
+
+    const paddedBodyRows = bodyRows.map((row: any[]) => {
+      const safeRow = Array.isArray(row) ? row : [];
+      if (!columnCount || safeRow.length >= columnCount) return safeRow;
+      return [
+        ...safeRow,
+        ...Array.from({ length: columnCount - safeRow.length }).map(() => ({
+          has_question: false,
+          content: '',
+          alignment: 'left' as const,
+        })),
+      ];
+    });
+
+    if (headerRow.length > 0) return [headerRow, ...paddedBodyRows];
+    return paddedBodyRows;
   };
 
   const renderQuestionInput = (question: Question, group: QuestionGroup) => {
