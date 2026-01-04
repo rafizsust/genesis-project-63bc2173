@@ -87,93 +87,70 @@ export function ListeningQuestions({
     return String.fromCharCode(65 + index);
   };
 
-  // Normalize AI-practice listening table_data which may come as:
-  // Format 1 (AI generated): { headers: string[], rows: Array<Array<{text?:string,isBlank?:boolean,questionNumber?:number}>> }
-  // Format 2 (Bulk admin/presets): Array of row arrays where each cell is {content, has_question, question_number?}
-  // Format 3 (Already normalized): TableData array format
+  // Normalize listening table_data which may come as:
+  // - AI format: { headers: string[], rows: Array<Array<{text?:string,isBlank?:boolean,questionNumber?:number}>> }
+  // - Admin/editor format: { rows: TableData, heading?, headingAlignment? }
+  // - Legacy/DB format: TableData array, sometimes with camelCase keys
+  // Also repairs a common AI issue where a blank is put into a "orphan row" (only the input appears on the next row).
   const normalizeAiListeningTableData = (raw: any): TableData => {
     if (!raw) return [];
 
-    // Already in our expected TableData format (array of arrays with proper cell objects)
-    if (Array.isArray(raw)) {
-      // Check if first row first cell has 'content' property - if so, it's already normalized
-      if (raw.length > 0 && Array.isArray(raw[0]) && raw[0].length > 0) {
-        const firstCell = raw[0][0];
-        if (firstCell && typeof firstCell === 'object' && 'content' in firstCell) {
-          return raw as TableData;
-        }
-      }
-      // Otherwise it might be some other array format, return as-is
-      return raw as TableData;
-    }
-
-    // AI format: { headers: [...], rows: [[...], [...]] }
-    const headers = Array.isArray(raw.headers) ? raw.headers : [];
-    const rows = Array.isArray(raw.rows) ? raw.rows : [];
-
-    // Convert headers to cell objects (first row)
-    const headerRow = headers.map((h: any) => ({
-      has_question: false,
-      content: typeof h === 'string' ? h : (h?.content ?? h?.text ?? String(h ?? '')),
-      alignment: 'left' as const,
-    }));
-
-    // Convert body rows - handle various cell formats
-    const bodyRows = rows.map((r: any[]) =>
-      (Array.isArray(r) ? r : []).map((cell: any) => {
-        // Already properly formatted cell
-        if (cell && typeof cell === 'object' && 'content' in cell) {
-          return {
-            has_question: Boolean(cell.has_question),
-            content: String(cell.content ?? ''),
-            question_number: cell.question_number,
-            alignment: (cell.alignment as 'left' | 'center' | 'right') || 'left',
-          };
-        }
-
-        // Blank cell (AI format with isBlank flag)
-        if (cell?.isBlank || cell?.is_blank) {
-          return {
-            has_question: true,
-            content: '',
-            question_number: Number(cell.questionNumber ?? cell.question_number ?? 0),
-            alignment: 'left' as const,
-          };
-        }
-
-        // Cell with has_question flag (alternate AI format)
-        if (cell?.has_question) {
-          return {
-            has_question: true,
-            content: String(cell.content ?? cell.text ?? ''),
-            question_number: Number(cell.questionNumber ?? cell.question_number ?? 0),
-            alignment: (cell.alignment as 'left' | 'center' | 'right') || 'left',
-          };
-        }
-
-        // Plain text cell (AI format)
-        const text =
-          typeof cell === 'string' ? cell : (cell?.text ?? cell?.content ?? '');
-
+    // Helper: normalize cell key variants
+    const normalizeCell = (cell: any) => {
+      if (!cell || typeof cell !== 'object') {
         return {
           has_question: false,
-          content: String(text ?? ''),
+          content: String(cell ?? ''),
           alignment: 'left' as const,
         };
-      })
+      }
+
+      const hasQuestion = Boolean(cell.has_question ?? cell.hasQuestion ?? cell.isBlank ?? cell.is_blank);
+      const questionNumber = Number(cell.question_number ?? cell.questionNumber ?? cell.question_number ?? cell.questionNumber ?? 0) || undefined;
+
+      return {
+        has_question: hasQuestion,
+        content: String(cell.content ?? cell.text ?? ''),
+        correct_answer: cell.correct_answer ?? cell.correctAnswer,
+        question_number: hasQuestion ? questionNumber : undefined,
+        alignment: (cell.alignment as 'left' | 'center' | 'right') || 'left',
+      };
+    };
+
+    // 1) Convert to TableData shape
+    let table: any[] = [];
+
+    if (Array.isArray(raw)) {
+      table = raw;
+    } else if (raw?.rows && Array.isArray(raw.rows)) {
+      table = raw.rows;
+    } else if (Array.isArray(raw.headers) || Array.isArray(raw.rows)) {
+      const headers = Array.isArray(raw.headers) ? raw.headers : [];
+      const rows = Array.isArray(raw.rows) ? raw.rows : [];
+
+      const headerRow = headers.map((h: any) => ({
+        has_question: false,
+        content: typeof h === 'string' ? h : String(h?.content ?? h?.text ?? ''),
+        alignment: 'left' as const,
+      }));
+
+      const bodyRows = rows.map((r: any[]) => (Array.isArray(r) ? r : []).map(normalizeCell));
+      table = headerRow.length ? [headerRow, ...bodyRows] : bodyRows;
+    } else {
+      return [];
+    }
+
+    // 2) Normalize every row/cell + compute stable column count
+    const normalized = (Array.isArray(table) ? table : []).map((row) =>
+      (Array.isArray(row) ? row : []).map(normalizeCell)
     );
 
-    // IMPORTANT: keep a consistent column count across all rows so the table can't "break"
-    const columnCount =
-      headerRow.length ||
-      Math.max(0, ...bodyRows.map((r: any[]) => (Array.isArray(r) ? r.length : 0)));
-
-    const paddedBodyRows = bodyRows.map((row: any[]) => {
-      const safeRow = Array.isArray(row) ? row : [];
-      if (!columnCount || safeRow.length >= columnCount) return safeRow;
+    const columnCount = Math.max(0, ...normalized.map((r) => r.length));
+    const padded: TableData = normalized.map((row) => {
+      if (row.length >= columnCount) return row;
       return [
-        ...safeRow,
-        ...Array.from({ length: columnCount - safeRow.length }).map(() => ({
+        ...row,
+        ...Array.from({ length: columnCount - row.length }).map(() => ({
           has_question: false,
           content: '',
           alignment: 'left' as const,
@@ -181,8 +158,55 @@ export function ListeningQuestions({
       ];
     });
 
-    if (headerRow.length > 0) return [headerRow, ...paddedBodyRows];
-    return paddedBodyRows;
+    // 3) Repair "orphan blank row" by moving single blank cell into previous meaningful row
+    // Pattern: a row where exactly 1 cell is a question + all other cells are empty
+    const repaired: TableData = [];
+    for (let i = 0; i < padded.length; i++) {
+      const row = padded[i];
+
+      // keep header row as-is
+      if (i === 0) {
+        repaired.push(row);
+        continue;
+      }
+
+      const questionCols = row
+        .map((c, idx) => (c.has_question ? idx : -1))
+        .filter((idx) => idx >= 0);
+
+      const nonEmptyTextCols = row
+        .map((c, idx) => (String(c.content || '').trim() ? idx : -1))
+        .filter((idx) => idx >= 0);
+
+      const looksLikeOrphanRow = questionCols.length === 1 && nonEmptyTextCols.length === 0;
+
+      if (looksLikeOrphanRow && repaired.length > 0) {
+        const qCol = questionCols[0];
+        const blankCell = row[qCol];
+        const prev = repaired[repaired.length - 1];
+
+        // Only merge if previous row has some content (otherwise we'd be stacking empties)
+        const prevHasAnyContent = prev.some((c) => String(c.content || '').trim() || c.has_question);
+
+        if (prevHasAnyContent && prev[qCol] && !prev[qCol].has_question) {
+          prev[qCol] = {
+            ...prev[qCol],
+            has_question: true,
+            question_number: blankCell.question_number,
+            // keep previous text; blankCell.content is typically empty
+          };
+          // We moved the blank into the previous row; drop this orphan row.
+          continue;
+        }
+      }
+
+      repaired.push(row);
+    }
+
+    // 4) Remove fully empty body rows (keeps header)
+    const header = repaired[0] ? [repaired[0]] : [];
+    const body = repaired.slice(1).filter((r) => r.some((c) => String(c.content || '').trim() || c.has_question));
+    return [...header, ...body];
   };
 
   const renderQuestionInput = (question: Question, group: QuestionGroup) => {
@@ -440,8 +464,8 @@ export function ListeningQuestions({
                 let tableHeadingAlignment: 'left' | 'center' | 'right' | undefined;
                 
                 if (Array.isArray(rawTableData)) {
-                  // Direct TableData format (admin or already-normalized)
-                  tableRows = rawTableData;
+                  // Legacy/admin/DB TableData format (may still need padding/key normalization)
+                  tableRows = normalizeAiListeningTableData(rawTableData);
                   tableHeading = undefined;
                   tableHeadingAlignment = undefined;
                 } else if (rawTableData?.headers && rawTableData?.rows) {
@@ -451,7 +475,7 @@ export function ListeningQuestions({
                   tableHeadingAlignment = rawTableData.headingAlignment;
                 } else if (rawTableData?.rows) {
                   // Admin "TableEditorData" format: { rows, heading?, headingAlignment? }
-                  tableRows = rawTableData.rows;
+                  tableRows = normalizeAiListeningTableData(rawTableData);
                   tableHeading = rawTableData.heading;
                   tableHeadingAlignment = rawTableData.headingAlignment;
                 } else {

@@ -105,14 +105,15 @@ export function ListeningTableCompletion({
           <tbody>
             {bodyRows.map((row, rowIndex) => (
               <tr key={rowIndex}>
-                {row.map((cell: TableCellData, colIndex) => {
-                  const isQuestionCell = cell.has_question;
+                {row.map((cell: any, colIndex) => {
+                  const isQuestionCell = Boolean(cell?.has_question ?? cell?.hasQuestion);
+                  const questionNumber = Number(cell?.question_number ?? cell?.questionNumber ?? 0) || undefined;
 
                   // Inline blanks use 2+ underscores
-                  const hasInlineBlank = /_{2,}/.test(cell.content);
-                  const parts = hasInlineBlank ? cell.content.split(/_{2,}/) : [cell.content];
+                  const hasInlineBlank = /_{2,}/.test(String(cell?.content ?? ''));
+                  const parts = hasInlineBlank ? String(cell?.content ?? '').split(/_{2,}/) : [String(cell?.content ?? '')];
 
-                  const currentAnswerString = answers[cell.question_number!] || '';
+                  const currentAnswerString = (questionNumber ? answers[questionNumber] : '') || '';
                   const currentAnswers = parts.length - 1 > 1 ? currentAnswerString.split(',') : [currentAnswerString];
 
                   return (
@@ -157,10 +158,10 @@ export function ListeningTableCompletion({
                                       const newAnswers = [...currentAnswers];
                                       newAnswers[partIndex] = e.target.value;
 
-                                      const updatedAnswer = parts.length - 1 > 1 ? newAnswers.join(',') : newAnswers[0];
-                                      onAnswerChange(cell.question_number!, updatedAnswer);
-                                    }}
-                                    placeholder={String(cell.question_number)}
+                                       const updatedAnswer = parts.length - 1 > 1 ? newAnswers.join(',') : newAnswers[0];
+                                       if (questionNumber) onAnswerChange(questionNumber, updatedAnswer);
+                                     }}
+                                     placeholder={questionNumber ? String(questionNumber) : ''}
                                     className={cn(
                                       "ielts-input h-7 text-sm font-normal px-2 w-28 rounded-[3px] text-center placeholder:text-center placeholder:font-bold placeholder:text-foreground/70",
                                       "bg-background border border-[hsl(var(--ielts-input-border))] text-foreground",
@@ -186,15 +187,15 @@ export function ListeningTableCompletion({
                               ) : null}{' '}
                               <input
                                 type="text"
-                                value={currentAnswers[0] || ''}
-                                onChange={(e) => onAnswerChange(cell.question_number!, e.target.value)}
-                                placeholder={String(cell.question_number)}
-                                className={cn(
-                                  "ielts-input h-7 text-sm font-normal px-2 w-28 rounded-[3px] text-center placeholder:text-center placeholder:font-bold placeholder:text-foreground/70",
-                                  "bg-background border border-[hsl(var(--ielts-input-border))] text-foreground",
-                                  "focus:outline-none focus:border-[hsl(var(--ielts-input-focus))] focus:ring-0",
-                                  "transition-colors inline align-middle"
-                                )}
+                                 value={currentAnswers[0] || ''}
+                                 onChange={(e) => questionNumber && onAnswerChange(questionNumber, e.target.value)}
+                                 placeholder={questionNumber ? String(questionNumber) : ''}
+                                 className={cn(
+                                   "ielts-input h-7 text-sm font-normal px-2 w-28 rounded-[3px] text-center placeholder:text-center placeholder:font-bold placeholder:text-foreground/70",
+                                   "bg-background border border-[hsl(var(--ielts-input-border))] text-foreground",
+                                   "focus:outline-none focus:border-[hsl(var(--ielts-input-focus))] focus:ring-0",
+                                   "transition-colors inline align-middle"
+                                 )}
                               />
                             </>
                           )}
