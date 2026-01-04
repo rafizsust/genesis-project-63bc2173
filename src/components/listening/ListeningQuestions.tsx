@@ -540,7 +540,7 @@ export function ListeningQuestions({
                 // MCMA in Listening should match Reading MCMA UX:
                 // - One checkbox list (select N letters)
                 // - Answer stored on start_question
-                // Some older/broken presets were generated without options; if so, fall back to Fill-in-Blank.
+                // If options are missing, show an error state instead of fallback to Fill-in-Blank
 
                 const groupOptionsRaw = group.options;
                 const firstQ = groupQuestions[0];
@@ -580,22 +580,19 @@ export function ListeningQuestions({
                   }
                 }
 
-                // 3) Broken preset fallback: MCMA type but no options were generated.
-                // Render as Fill-in-Blank so the test is still answerable.
+                // 3) Missing options: Show error state with regeneration prompt
+                // This signals to the parent that the test needs regeneration
                 if (normalizedOptions.length === 0) {
                   return (
                     <div key={group.id} className="space-y-3 mt-2">
-                      {groupQuestions.map((q) => (
-                        <FillInBlank
-                          key={q.id}
-                          testId={testId}
-                          question={q}
-                          answer={answers[q.question_number]}
-                          onAnswerChange={(value) => onAnswerChange(q.question_number, value)}
-                          renderRichText={renderRichText}
-                          stripLeadingQuestionNumber={stripLeadingQuestionNumber}
-                        />
-                      ))}
+                      <div className="p-4 bg-destructive/10 border border-destructive/30 rounded-lg text-center">
+                        <p className="text-destructive font-medium mb-2">
+                          ⚠️ Multiple choice options missing
+                        </p>
+                        <p className="text-sm text-muted-foreground">
+                          This test was generated incorrectly. Please go back and generate a new practice test.
+                        </p>
+                      </div>
                     </div>
                   );
                 }

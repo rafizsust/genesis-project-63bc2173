@@ -624,20 +624,100 @@ export default function AIPracticeListeningTest() {
     try {
       console.log("Submitting listening test...");
 
-      // 1. Calculate Score Locally
+      // Build question results with MCMA group handling (same as reading)
+      const questionResults: QuestionResult[] = [];
+      const processedQuestionNumbers = new Set<number>();
       let correctCount = 0;
-      questions.forEach((q) => {
-        const userVal = answers[q.question_number];
-        if (!userVal) return;
-        
-        const normUser = String(userVal).trim().toLowerCase();
-        const normCorrect = String(q.correct_answer).trim().toLowerCase();
-        
-        // Check exact match or list match
-        if (normUser === normCorrect || normCorrect.split(';').map(a => a.trim().toLowerCase()).includes(normUser)) {
-          correctCount++;
+      
+      // Process MCMA groups first (one result per group with partial scoring)
+      for (const group of questionGroups) {
+        if (group.question_type === 'MULTIPLE_CHOICE_MULTIPLE') {
+          const rangeNumbers: number[] = [];
+          for (let n = group.start_question; n <= group.end_question; n++) {
+            rangeNumbers.push(n);
+            processedQuestionNumbers.add(n);
+          }
+          
+          // User's answer is stored on start_question only
+          const userAnswerRaw = answers[group.start_question]?.trim() || '';
+          const userLetters = userAnswerRaw
+            .split(',')
+            .map(s => s.trim().toUpperCase())
+            .filter(Boolean);
+          
+          // Get correct answers from the original test payload
+          const firstQFromTest = test.questionGroups?.flatMap(g => g.questions).find(
+            (oq) => oq.question_number === group.start_question
+          );
+          const correctAnswerRaw = firstQFromTest?.correct_answer || '';
+          const correctLetters = correctAnswerRaw
+            .split(',')
+            .map(s => s.trim().toUpperCase())
+            .filter(Boolean);
+          
+          // Partial scoring: count how many user selections are correct
+          const correctSelections = userLetters.filter(l => correctLetters.includes(l));
+          const partialScore = correctSelections.length;
+          const maxScore = correctLetters.length;
+          const isFullyCorrect = partialScore === maxScore && userLetters.length === maxScore;
+          
+          // Add partial score to total
+          correctCount += partialScore;
+          
+          // Get explanation from original test data
+          const originalQ = test.questionGroups?.flatMap(g => g.questions).find(
+            oq => oq.question_number === group.start_question
+          );
+          
+          questionResults.push({
+            questionNumber: group.start_question,
+            questionNumbers: rangeNumbers,
+            userAnswer: userLetters.join(','),
+            correctAnswer: correctLetters.join(','),
+            isCorrect: isFullyCorrect,
+            partialScore,
+            maxScore,
+            explanation: originalQ?.explanation || '',
+            questionType: 'MULTIPLE_CHOICE_MULTIPLE',
+          });
         }
-      });
+      }
+      
+      // Process remaining questions (non-MCMA)
+      for (const q of questions) {
+        if (processedQuestionNumbers.has(q.question_number)) continue;
+        
+        const userAnswer = answers[q.question_number]?.trim() || '';
+        const correctAnswer = q.correct_answer;
+        const normUser = userAnswer.toLowerCase();
+        const normCorrect = String(correctAnswer).trim().toLowerCase();
+        const isCorrect = normUser === normCorrect || 
+          normCorrect.split(';').map(a => a.trim().toLowerCase()).includes(normUser);
+        
+        if (isCorrect) correctCount++;
+        
+        const originalQ = test.questionGroups?.flatMap(g => g.questions).find(
+          oq => oq.question_number === q.question_number
+        );
+        
+        questionResults.push({
+          questionNumber: q.question_number,
+          userAnswer,
+          correctAnswer,
+          isCorrect,
+          explanation: originalQ?.explanation || '',
+          questionType: q.question_type,
+        });
+      }
+
+      // Sort by question number
+      questionResults.sort((a, b) => a.questionNumber - b.questionNumber);
+
+      // Calculate total questions (MCMA counts as maxScore, others as 1)
+      let totalQuestions = 0;
+      for (const qr of questionResults) {
+        totalQuestions += qr.maxScore || 1;
+      }
 
       // 2. Calculate Band Score (IELTS Listening Table)
       let bandScore = 0;
@@ -652,33 +732,11 @@ export default function AIPracticeListeningTest() {
       else if (correctCount >= 16) bandScore = 5;
       else bandScore = 4;
 
-      // 3. Build question results for results page
-      const questionResults: QuestionResult[] = questions.map((q) => {
-        const userAnswer = answers[q.question_number]?.trim() || '';
-        const correctAnswer = q.correct_answer;
-        const normUser = userAnswer.toLowerCase();
-        const normCorrect = String(correctAnswer).trim().toLowerCase();
-        const isCorrect = normUser === normCorrect || 
-          normCorrect.split(';').map(a => a.trim().toLowerCase()).includes(normUser);
-
-        return {
-          questionNumber: q.question_number,
-          userAnswer,
-          correctAnswer,
-          isCorrect,
-          explanation: '',
-          questionType: q.question_type,
-        };
-      });
-
-      // Sort by question number
-      questionResults.sort((a, b) => a.questionNumber - b.questionNumber);
-
       const result: PracticeResult = {
         testId: test.id,
         answers,
         score: correctCount,
-        totalQuestions: questions.length,
+        totalQuestions,
         bandScore,
         completedAt: new Date().toISOString(),
         timeSpent,
